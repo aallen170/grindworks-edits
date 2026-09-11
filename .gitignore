@@ -17,3 +17,7 @@
 *.dmg
 
 *.zip
+
+# Exported game builds (Windows/console wrapper + packed data)
+*.exe
+*.pck

@@ -8,14 +8,26 @@ class_name GeneralButton
 @export var press_db_offset := 0.0
 @export_multiline var text := "":
 	set(x):
-		$Label.text = x
+		_text = x
+		if is_node_ready():
+			$Label.text = x
 	get:
-		return $Label.text
+		return _text
 @export var font_size: float:
 	set(x):
-		$Label.label_settings.font_size = x
+		_font_size = x
+		if is_node_ready():
+			$Label.label_settings.font_size = x
 	get:
-		return $Label.label_settings.font_size
+		return _font_size
+
+var _text := ""
+var _font_size := 0.0
+
+func _ready() -> void:
+	$Label.text = _text
+	if _font_size > 0.0:
+		$Label.label_settings.font_size = _font_size
 
 func on_button_down() -> void:
 	if press_sfx:

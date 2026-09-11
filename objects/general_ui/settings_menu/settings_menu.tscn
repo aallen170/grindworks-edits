@@ -451,28 +451,25 @@ label_settings = SubResource("LabelSettings_xxrhd")
 [node name="BattleSpeed" type="HBoxContainer" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings" index="2" unique_id=864618133]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed" index="0" unique_id=1683304553]
+[node name="BattleSpeedLabel" type="Label" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed" index="0" unique_id=1683304553]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(232, 0)
 layout_mode = 2
 text = "Battle Speed:"
 label_settings = SubResource("LabelSettings_n41hl")
 
-[node name="SpeedButton" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed" index="1" unique_id=1599006513 instance=ExtResource("4_aygce")]
+[node name="SpeedSlider" type="HSlider" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed" index="1" unique_id=1599006513]
 unique_name_in_owner = true
-material = SubResource("ShaderMaterial_mtv11")
-custom_minimum_size = Vector2(160, 60)
+custom_minimum_size = Vector2(200, 0)
 layout_mode = 2
 size_flags_horizontal = 10
 size_flags_vertical = 4
-texture_normal = ExtResource("5_p4xtr")
-texture_pressed = ExtResource("6_bs0ac")
-texture_hover = ExtResource("7_nxqst")
-texture_disabled = ExtResource("6_bs0ac")
-text = "1.0x"
-font_size = 24.0
-
-[node name="Label" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed/SpeedButton" index="0"]
-text = "1.0x"
-label_settings = SubResource("LabelSettings_xxrhd")
+theme = ExtResource("9_dnno6")
+min_value = 0.5
+max_value = 4.0
+step = 0.01
+value = 1.0
+scrollable = false
 
 [node name="ControlStyle" type="HBoxContainer" parent="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings" index="3" unique_id=1329623212]
 layout_mode = 2
@@ -895,7 +892,7 @@ label_settings = SubResource("LabelSettings_xxrhd")
 [connection signal="value_changed" from="Panel/SettingScroller/MarginContainer/SettingContainer/AudioSettings/SFXVolume/SFXSlider" to="." method="set_bus_volume" binds= ["SFX"]]
 [connection signal="pressed" from="Panel/SettingScroller/MarginContainer/SettingContainer/AudioSettings/AmbientSound/AmbientButton" to="." method="toggle_ambient_sfx"]
 [connection signal="pressed" from="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/ImStuck/StuckButton" to="." method="cry_for_help"]
-[connection signal="pressed" from="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed/SpeedButton" to="." method="change_speed"]
+[connection signal="value_changed" from="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed/SpeedSlider" to="." method="set_battle_speed"]
 [connection signal="pressed" from="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/ControlStyle/ControlStyleButton" to="." method="toggle_control_style"]
 [connection signal="value_changed" from="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/CameraSensitivity/CamSensSlider" to="." method="set_cam_sens"]
 [connection signal="pressed" from="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/AutoSprint/AutoSprintButton" to="." method="toggle_auto_sprint"]
@@ -916,7 +913,6 @@ label_settings = SubResource("LabelSettings_xxrhd")
 [editable path="Panel/SettingScroller/MarginContainer/SettingContainer/VideoSettings/ColorblindToggle/ColorBlindButton"]
 [editable path="Panel/SettingScroller/MarginContainer/SettingContainer/AudioSettings/AmbientSound/AmbientButton"]
 [editable path="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/ImStuck/StuckButton"]
-[editable path="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/BattleSpeed/SpeedButton"]
 [editable path="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/ControlStyle/ControlStyleButton"]
 [editable path="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/AutoSprint/AutoSprintButton"]
 [editable path="Panel/SettingScroller/MarginContainer/SettingContainer/GameplaySettings/ItemDescriptions/DescriptionButton"]

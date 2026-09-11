@@ -21,6 +21,7 @@ var stats: PlayerStats:
 	get: return player.stats
 
 func _physics_process(delta: float) -> void:
+	_jumped_this_frame = false
 	handle_movement(delta)
 	handle_sfx()
 
@@ -118,7 +119,7 @@ func _movement_style_tank(delta: float) -> void:
 	toon.rotation.y += (deg_to_rad(turn_speed * delta) * -input_turn)
 	camera.rotation.y += (deg_to_rad(turn_speed * delta) * -input_turn)
 	
-	if is_on_floor() and not Input.is_action_just_pressed("jump") and can_jump:
+	if is_on_floor() and not _jumped_this_frame and can_jump:
 		if input_dir == 1 and sprint:
 			set_animation('run')
 		elif input_turn or input_dir:
@@ -143,6 +144,7 @@ func should_sprint() -> bool:
 
 const COYOTE_TIME := 0.07
 const EXTRA_JUMP_DELAY := 0.6
+const JUMP_BUFFER_TIME := 0.15
 
 var can_jump := true
 var jump_velocity := 7.0
@@ -157,6 +159,31 @@ var _extra_jumps_remaining := 0
 var _extra_jump_ready := false
 var _using_extra_jumps := false
 
+# Jump buffering: remembers a jump press/hold for a short window so pressing
+# (or holding) jump slightly before landing still triggers a jump on landing,
+# instead of requiring perfectly-timed input.
+var _jump_buffer_expiry := -INF
+
+# True for the physics frame a jump actually executes. Used instead of
+# Input.is_action_just_pressed('jump') to decide whether to skip the
+# walk/run animation, since a buffered/held jump can fire several frames
+# after the key was first pressed.
+var _jumped_this_frame := false
+
+func _is_jump_input_active(just_pressed: bool) -> bool:
+	var check := Callable(Input, "is_action_just_pressed" if just_pressed else "is_action_pressed")
+	if check.call('jump'):
+		return true
+	if control_style and check.call('mouse_jump'):
+		return true
+	return false
+
+func _update_jump_buffer() -> void:
+	# Refresh the buffer on a fresh press, and keep refreshing it every frame
+	# the key is held so holding jump auto-repeats as soon as landing allows it.
+	if _is_jump_input_active(true) or _is_jump_input_active(false):
+		_jump_buffer_expiry = Time.get_unix_time_from_system() + JUMP_BUFFER_TIME
+
 func is_on_floor() -> bool:
 	return player.is_on_floor()
 
@@ -164,21 +191,29 @@ func is_jumpable() -> bool:
 	return _extra_jump_ready or is_on_floor() or (Time.get_unix_time_from_system() - last_floor_time) < COYOTE_TIME
 
 func handle_jump(_delta: float) -> void:
+	_update_jump_buffer()
+
 	# Jump/Gravity
 	if is_jumpable():
 		if is_on_floor():
 			last_floor_time = Time.get_unix_time_from_system()
 			clear_extra_jumps()
 		
-		var jump_pressed := Input.is_action_just_pressed('jump')
-		if not jump_pressed and control_style:
-			jump_pressed = Input.is_action_just_pressed('mouse_jump')
+		var jump_pressed := Time.get_unix_time_from_system() < _jump_buffer_expiry
 		
 		if jump_pressed and can_jump:
 			velocity.y = (jump_velocity * jump_velocity_mult) * stats.agility
 			var platform_velocity := player.get_platform_velocity().y
 			if platform_velocity > 0.0:
 				velocity.y += platform_velocity
+
+			# Consume the buffer so a held key waits for the next physics
+			# frame's refresh instead of double-jumping instantly, and close
+			# out the coyote window so a held key can't reuse it for an
+			# instant second jump right after this one.
+			_jump_buffer_expiry = -INF
+			last_floor_time = -INF
+			_jumped_this_frame = true
 
 			check_extra_jumps()
 
@@ -248,7 +283,7 @@ func get_animation() -> String:
 
 func assess_anim() -> void:
 	var anim := base_anim
-	if is_on_floor() and not (Input.is_action_just_pressed('jump') or Input.is_action_just_pressed('mouse_jump')):
+	if is_on_floor() and not _jumped_this_frame:
 		if moving:
 			if sprint:
 				anim = 'run'

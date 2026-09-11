@@ -4,7 +4,6 @@ class_name SettingsFile
 
 ## VIDEO SETTINGS
 const FPSOptions = [60, 90, 120, 144, 165, 240, 360, 0]
-static var SpeedOptions = [1.0, 1.25, 1.5, 1.75, 2.0]
 
 ## String = Setting name
 ## Dictionary = {Color1: Color2}, remaps Color1 to Color2 where applicable 
@@ -41,13 +40,11 @@ func get_color_blind_mapping() -> Dictionary:
 @export var ambient_sfx_enabled := true
 
 ## GAMEPLAY SETTINGS
-@export var battle_speed_idx := 0:
+const MIN_BATTLE_SPEED := 0.5
+const MAX_BATTLE_SPEED := 4.0
+@export var battle_speed := 1.0:
 	set(x):
-		battle_speed_idx = x
-		if battle_speed_idx < 0:
-			battle_speed_idx = 0
-		elif battle_speed_idx >= SpeedOptions.size():
-			battle_speed_idx = SpeedOptions.size() - 1
+		battle_speed = clampf(x, MIN_BATTLE_SPEED, MAX_BATTLE_SPEED)
 @export var control_style := true
 @export var camera_sensitivity := 1.0:
 	set(x):
@@ -133,13 +130,3 @@ func set_bus_volume(bus: String, volume_db: float) -> void:
 	if OS.has_feature('debug'):
 		print(bus + " volume set to: " + str(AudioServer.get_bus_volume_db(get_bus_index(bus))))
 
-static func add_battle_speed(speed: float) -> void:
-	for option in SpeedOptions:
-		if is_equal_approx(option, speed):
-			return
-	var insert_index := 0
-	while insert_index < SpeedOptions.size():
-		if speed < SpeedOptions[insert_index]:
-			break
-		insert_index += 1
-	SpeedOptions.insert(insert_index, speed)

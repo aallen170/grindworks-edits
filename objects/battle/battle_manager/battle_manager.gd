@@ -8,6 +8,7 @@ const CRIT_SFX_2 := preload("res://audio/sfx/battle/gags/crit/crit_2.ogg")
 const CRIT_SFX_3 := preload("res://audio/sfx/battle/gags/crit/crit_3.ogg")
 const CRIT_SFX_4 := preload("res://audio/sfx/battle/gags/crit/crit_4.ogg")
 const CRIT_SFX: Array = [CRIT_SFX_1, CRIT_SFX_2, CRIT_SFX_3, CRIT_SFX_4]
+const BATTLE_SPEED_CONTROL := preload("res://objects/battle/battle_ui/battle_speed_control/battle_speed_control.tscn")
 
 ## Child references
 @onready var scene_timer := $SceneTimer
@@ -82,6 +83,9 @@ func start_battle(cog_array: Array[Cog], battlenode: BattleNode):
 	
 	# UI must be added last
 	add_child(battle_ui)
+	# Added as its own always-visible layer (not inside battle_ui) so it stays
+	# on screen even while battle_ui is hidden during round resolution.
+	add_child(BATTLE_SPEED_CONTROL.instantiate())
 	s_ui_initialized.emit()
 	
 	player.toon.drop_shadow.reparent(player.toon.legs.shadow_bone)
@@ -97,7 +101,7 @@ func gags_selected(gags: Array[ToonAttack]):
 
 func apply_battle_speed() -> void:
 	# Set the engine speed scale to the battle speed setting
-	Engine.time_scale = SaveFileService.settings_file.SpeedOptions[SaveFileService.settings_file.get('battle_speed_idx')]
+	Engine.time_scale = SaveFileService.settings_file.battle_speed
 
 func revert_battle_speed() -> void:
 	Engine.time_scale = 1.0
@@ -216,6 +220,7 @@ func round_over():
 	await check_pulses(cogs)
 
 	revert_battle_speed()
+	is_round_ongoing = false
 
 	if cogs.size() == 0:
 		end_battle()

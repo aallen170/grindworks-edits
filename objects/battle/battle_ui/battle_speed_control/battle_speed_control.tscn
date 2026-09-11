@@ -1,0 +1,69 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://objects/battle/battle_ui/battle_speed_control/battle_speed_control.gd" id="1_bsc01"]
+[ext_resource type="FontFile" uid="uid://815gwlftl5ik" path="res://fonts/impress-bt.ttf" id="2_font1"]
+[ext_resource type="Theme" uid="uid://dhqxwi6busihb" path="res://objects/general_ui/settings_menu/slider_theme.tres" id="3_theme1"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_bsc_caption"]
+font = ExtResource("2_font1")
+font_size = 14
+font_color = Color(1, 1, 1, 0.85)
+outline_size = 4
+outline_color = Color(0, 0, 0, 0.6)
+
+[sub_resource type="LabelSettings" id="LabelSettings_bsc_value"]
+font = ExtResource("2_font1")
+font_size = 16
+font_color = Color(1, 1, 1, 1)
+outline_size = 4
+outline_color = Color(0, 0, 0, 0.6)
+
+[node name="BattleSpeedControl" type="CanvasLayer"]
+script = ExtResource("1_bsc01")
+
+[node name="Anchor" type="Control" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -220.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = 68.0
+grow_horizontal = 0
+
+[node name="Caption" type="Label" parent="Anchor"]
+layout_mode = 0
+offset_top = -20.0
+offset_right = 204.0
+offset_bottom = -2.0
+text = "BATTLE SPEED"
+label_settings = SubResource("LabelSettings_bsc_caption")
+horizontal_alignment = 1
+
+[node name="Row" type="HBoxContainer" parent="Anchor"]
+layout_mode = 0
+offset_right = 204.0
+offset_bottom = 32.0
+theme_override_constants/separation = 10
+
+[node name="SpeedSlider" type="HSlider" parent="Anchor/Row"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(140, 0)
+layout_mode = 2
+size_flags_vertical = 4
+theme = ExtResource("3_theme1")
+min_value = 0.5
+max_value = 4.0
+step = 0.01
+value = 1.0
+scrollable = false
+
+[node name="SpeedLabel" type="Label" parent="Anchor/Row"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(54, 0)
+layout_mode = 2
+size_flags_vertical = 4
+text = "x1.00"
+label_settings = SubResource("LabelSettings_bsc_value")
+
+[connection signal="value_changed" from="Anchor/Row/SpeedSlider" to="." method="set_speed"]
