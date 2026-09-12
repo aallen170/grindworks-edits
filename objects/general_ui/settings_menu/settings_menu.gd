@@ -152,7 +152,7 @@ func toggle_ambient_sfx() -> void:
 
 #region Gameplay Settings
 
-@onready var speed_button: GeneralButton = %SpeedButton
+@onready var speed_slider: HSlider = %SpeedSlider
 @onready var reaction_button: GeneralButton = %ReactionButton
 @onready var description_button: GeneralButton = %DescriptionButton
 @onready var popups_button: GeneralButton = %PopupsButton
@@ -167,7 +167,8 @@ func toggle_ambient_sfx() -> void:
 @onready var button_prompts_button: GeneralButton = %ButtonPromptsButton
 
 func _sync_gameplay_settings() -> void:
-	speed_button.text = get_speed_string(SaveFileService.settings_file.SpeedOptions[get_setting("battle_speed_idx")])
+	speed_slider.value = get_setting("battle_speed")
+	%BattleSpeedLabel.set_text("Battle Speed: %s" % get_speed_string(speed_slider.value))
 	reaction_button.text = get_toggle_text(get_setting('item_reactions'))
 	description_button.text = get_toggle_text(get_setting('item_descriptions'))
 	auto_sprint_button.text = get_toggle_text(get_setting('auto_sprint'))
@@ -187,13 +188,9 @@ func _sync_gameplay_settings() -> void:
 		intro_skip_button.modulate.a = 0.5
 		intro_skip_button.material.set_shader_parameter('alpha', 0.5)
 
-func change_speed() -> void:
-	var curr_idx: int = get_setting('battle_speed_idx')
-	curr_idx += 1
-	if curr_idx >= SaveFileService.settings_file.SpeedOptions.size():
-		curr_idx = 0
-	update_setting('battle_speed_idx', curr_idx)
-	speed_button.text = get_speed_string(SaveFileService.settings_file.SpeedOptions[curr_idx])
+func set_battle_speed(value: float) -> void:
+	update_setting('battle_speed', value)
+	%BattleSpeedLabel.set_text("Battle Speed: %s" % get_speed_string(get_setting('battle_speed')))
 
 func get_speed_string(speed : float) -> String:
 	var text := "x%.2f" % speed
