@@ -103,6 +103,7 @@ var command_types: Array[Command] = [
 	OverrideNextChestItemCommand.new(),
 	UnlockAchievementsCommand.new(),
 	ForceSaveCommand.new(),
+	GodModeCommand.new(),
 ]
 
 func parse_command(text: String) -> void:
@@ -669,5 +670,71 @@ class ForceSaveCommand extends Command:
 		return "force save"
 	func run(_args) -> void:
 		SaveFileService.save()
+
+class GodModeCommand extends Command:
+	# Debug/testing shortcut: bundles a bunch of the individual "set stats ..."
+	# commands into one call so a fresh run can be geared up in a single
+	# command instead of typing each stat/gag change out by hand.
+	#
+	# Note on "0 gag point cost": there's no per-gag cost value on the Gag
+	# resources themselves to zero out - gag_balance is a shared point pool
+	# per track (see PlayerStats.restock/on_round_end/on_battle_started).
+	# The equivalent (and simplest) way to make points a non-issue is
+	# PlayerStats.debug_gag_points, which makes restock() always refill a
+	# track's balance to gag_cap instead of adding gag_regeneration - so
+	# points top off every round/battle start regardless of what you spent.
+	func get_prefix() -> String:
+		return "godmode"
+	func needs_subject() -> bool:
+		return true
+	func get_subject() -> Object:
+		return Util.get_player()
+	func get_subject_title() -> String:
+		return "player"
+	func run(_args: Array) -> void:
+		var player: Player = get_subject()
+		var stats: PlayerStats = player.stats
+
+		stats.max_hp = 999
+		stats.hp = 999
+		stats.damage = 999.0
+		stats.defense = 999.0
+		stats.speed = 200.0
+		stats.extra_jumps = 999
+		stats.debug_gag_points = true
+		stats.gag_cap = 99
+		stats.max_turns = 10
+		stats.turns = stats.max_turns
+
+		for track in ["Squirt", "Trap", "Lure", "Sound", "Throw"]:
+			if track in stats.gags_unlocked:
+				stats.gags_unlocked[track] = 7
+
+		# jump_velocity lives per-state (Walk/Chase/Push/Stopped/Sad are each
+		# their own PlayerState3D instance under Controller), so set it on
+		# every state that has it rather than just whichever one is active
+		# right now.
+		for player_state in player.controller.get_children():
+			if "jump_velocity" in player_state:
+				player_state.jump_velocity = 14.0
+
+		# Mirror onto the live battle copy too, same as the "set stats ..."
+		# commands do, so this also works mid-battle.
+		if is_instance_valid(BattleService.ongoing_battle):
+			var battle_stats: PlayerStats = BattleService.ongoing_battle.battle_stats[player]
+			battle_stats.max_hp = stats.max_hp
+			battle_stats.hp = stats.hp
+			battle_stats.damage = stats.damage
+			battle_stats.defense = stats.defense
+			battle_stats.speed = stats.speed
+			battle_stats.extra_jumps = stats.extra_jumps
+			battle_stats.debug_gag_points = stats.debug_gag_points
+			battle_stats.gag_cap = stats.gag_cap
+			battle_stats.max_turns = stats.max_turns
+			battle_stats.turns = stats.turns
+			for track in stats.gags_unlocked:
+				battle_stats.gags_unlocked[track] = stats.gags_unlocked[track]
+
+		submit_print("Godmode applied: max_hp/hp=999, damage/defense=999, speed=200, jump_velocity=14, extra_jumps=999, gag_cap=99, max_turns/turns=10, Squirt/Trap/Lure/Sound/Throw maxed, gag points refill to full every round/battle.")
 
 #endregion

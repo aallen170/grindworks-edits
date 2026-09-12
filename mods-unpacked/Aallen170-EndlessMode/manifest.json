@@ -1,0 +1,19 @@
+{
+	"dependencies": [],
+	"description": "Adds an Endless Mode to Toontown: The Grindworks - past floor 4, every elevator trip leads into a repeating, difficulty-scaled boss floor instead of the run ending.",
+	"extra": {
+		"godot": {
+			"authors": ["Aallen170"],
+			"compatible_game_version": ["1.2.7"],
+			"compatible_mod_loader_version": ["7.0.1"],
+			"incompatibilities": [],
+			"load_before": [],
+			"optional_dependencies": [],
+			"tags": ["Endless"]
+		}
+	},
+	"name": "EndlessMode",
+	"namespace": "Aallen170",
+	"version_number": "0.1.0",
+	"website_url": ""
+}
