@@ -1,62 +1,97 @@
 extends Object
 
-# TGM-6: Endless Mode hook for penthouse_boss.gd
+# TGM-8: Endless Mode hook for penthouse_boss.gd - suppress the vanilla
+# victory sequence on Endless Mode boss loops, and let the player choose to
+# end the run or keep going.
 #
-# TEMP DEBUG BUILD: has extra print() calls added at each step so we can see
-# exactly where the floor-7 freeze happens. Remove these once the bug is
-# found and fixed.
+# Two separate vanilla things fire unconditionally on every boss kill,
+# looping or not:
 #
-# Vanilla behavior: end_game() sends the player to the win_menu scene,
-# ending the run. It also frees any active partners (e.g. the Mystery Toon's
-# allies) but never clears Player.partners itself - fine in vanilla, since
-# the run ends immediately afterward and this code never runs a second time.
+# 1. battle_ending() - connected to the battle manager's s_battle_ending
+#    signal, fires BEFORE the victory-dance animation even plays. Stops the
+#    run timer, reveals the seed label (game_timer.become_full_visible()),
+#    and records best_time / checks the one-hour-win achievement.
 #
-# Endless behavior: loop back to the elevator instead, with the floor
-# counter advanced (mirroring what game_floor.gd normally does when
-# entering a standard floor - the boss floor uses an override_scene, so it
-# never goes through that increment itself) and the saved floor_choice
-# cleared so elevator_scene.gd's "resume last choice" branch doesn't
-# immediately re-trigger this same boss floor.
+# 2. on_battle_finished() - connected (in penthouse.tscn, not code) to
+#    BattleNode's s_battle_end signal, fires AFTER the victory-dance. Runs
+#    the toon-unlock logic and then win_game(), the ~20-30s cage-rescue
+#    cinema (cage lowering, caged-toon dialogue, camera pans, walk to
+#    elevator, fade to black) which itself calls end_game() at the very end.
 #
-# Because our loop can now run this code multiple times in one run, we also
-# guard the partner-freeing loop with is_instance_valid() and clear the
-# array afterward - without this, a second win would iterate over
-# already-freed Node references left over from the first win and call
-# queue_free() on them again.
+# Fix: skip battle_ending()'s vanilla body entirely on any boss floor - we
+# don't know yet whether this is a real ending. At on_battle_finished() -
+# after the victory-dance, before the unlock logic / cinematic - show a
+# simple end-run/keep-going prompt:
+#   - End Run: replay battle_ending()'s real effects (now that we know it's
+#     a real ending), then let vanilla on_battle_finished() run unmodified
+#     (unlock + win_game() + end_game() - the real, one-time ending).
+#   - Keep Going: skip all of it (no unlock, no cinematic, no timer/seed
+#     reveal) and do the same silent loop-back the old end_game() hook used
+#     to do. Because this can now run multiple times in one run, the
+#     partner-freeing loop is guarded with is_instance_valid() and the
+#     array is cleared afterward, so a later loop doesn't iterate over
+#     already-freed Node references from an earlier one.
+#
+# This replaces the old end_game() hook entirely - the loop-back logic now
+# lives in on_battle_finished()'s "keep going" branch below, so end_game()
+# itself no longer needs to be touched at all.
+
+const EndlessChoicePrompt := preload("res://mods-unpacked/Aallen170-EndlessMode/extensions/scenes/final_boss/endless_choice_prompt.gd")
 
 
-func end_game(chain: ModLoaderHookChain) -> void:
-	print("[EndlessMode DEBUG] penthouse_boss.end_game start, floor_number=", Util.floor_number)
+func battle_ending(chain: ModLoaderHookChain) -> void:
 	if Util.floor_number < 5:
 		# Shouldn't happen outside the boss floor - don't touch vanilla flow.
-		print("[EndlessMode DEBUG] penthouse_boss.end_game floor_number < 5, deferring to vanilla")
+		chain.execute_next([])
+		return
+	# Otherwise: skip vanilla's timer-lock / seed-reveal / best_time /
+	# achievement check. Replayed manually in on_battle_finished() below,
+	# only if the player ends up choosing to end the run.
+
+
+func on_battle_finished(chain: ModLoaderHookChain) -> void:
+	if Util.floor_number < 5:
+		# Shouldn't happen outside the boss floor - don't touch vanilla flow.
 		chain.execute_next([])
 		return
 
-	var boss: Node = chain.reference_object
+	var boss: FinalBossScene = chain.reference_object
 
-	match Util.get_player().character.character_id:
-		PlayerCharacter.Character.MYSTERY:
-			if not SaveFileService.progress_file.mystery_toon_win:
-				Globals.s_mystery_win.emit()
-				SaveFileService.make_progress('mystery_toon_win', true)
-	print("[EndlessMode DEBUG] penthouse_boss.end_game mystery check done")
+	var prompt := EndlessChoicePrompt.new()
+	boss.add_child(prompt)
+	var end_run: bool = await prompt.s_choice_made
 
-	Globals.s_game_win.emit()
-	print("[EndlessMode DEBUG] penthouse_boss.end_game s_game_win emitted")
+	if end_run:
+		apply_battle_ending_effects()
+		chain.execute_next([])
+		return
+
+	# Keep going: silent loop-back, same as the old end_game() hook used to
+	# do - no cinematic, no toon unlock, no timer/seed reveal, no wins/streak
+	# bump (those only happen through the real end_game() -> s_game_win path,
+	# which we're deliberately not calling here).
 	var player := Util.get_player()
-	print("[EndlessMode DEBUG] penthouse_boss.end_game player.partners count=", player.partners.size())
 	for partner in player.partners:
 		if is_instance_valid(partner):
 			partner.queue_free()
 	player.partners.clear()
-	print("[EndlessMode DEBUG] penthouse_boss.end_game partners cleared")
 
-	# Continue the loop instead of ending the run.
 	Util.floor_number += 1
-	print("[EndlessMode DEBUG] penthouse_boss.end_game floor_number incremented to ", Util.floor_number)
 	if SaveFileService.run_file:
 		SaveFileService.run_file.floor_choice = null
-	print("[EndlessMode DEBUG] penthouse_boss.end_game floor_choice cleared, about to change scene")
 	SceneLoader.change_scene_to_file('res://scenes/elevator_scene/elevator_scene.tscn')
-	print("[EndlessMode DEBUG] penthouse_boss.end_game change_scene_to_file returned")
+
+
+## Vanilla penthouse_boss.gd's battle_ending(), replayed here once we know
+## the player actually chose to end the run. Keep in sync with vanilla if it
+## ever changes.
+func apply_battle_ending_effects() -> void:
+	var player := Util.get_player()
+	player.game_timer_tick = false
+	player.lock_game_timer = true
+	player.game_timer.become_full_visible()
+	var win_time: float = player.game_timer.time
+	if win_time < 3600.0:
+		Globals.s_one_hour_win.emit()
+	if win_time < SaveFileService.progress_file.best_time or is_equal_approx(0.0, SaveFileService.progress_file.best_time):
+		SaveFileService.progress_file.best_time = player.game_timer.time
