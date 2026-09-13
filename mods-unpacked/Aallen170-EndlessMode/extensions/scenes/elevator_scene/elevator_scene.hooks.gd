@@ -9,9 +9,13 @@ extends Object
 #
 # Endless behavior: cycle BOSS_CYCLE_LENGTH floors of normal play followed by
 # one boss floor, repeating forever. floor_number == 5 reproduces vanilla's
-# exact boss encounter (10-16 range) as the first cycle's boss; every
-# BOSS_CYCLE_LENGTH floors after that is another boss encounter, with the cog
-# level range scaling up per boss encounter (not per floor number).
+# exact first boss encounter (10-16 range) as the cycle's baseline.
+#
+# Boss level_range scaling: continues the same average per-floor growth
+# vanilla's own difficulty table already uses across floors 0-5 (see
+# floor_variant.hooks.gd for the matching normal-floor version of this same
+# curve) instead of resetting back down after each boss or blowing up
+# exponentially. Keep LOW_RATE/HIGH_RATE in sync between the two files.
 #
 # BUG FIX (found via debug logging): chain.reference_object is typed as a
 # plain Node, and assigning a bare `[final_floor]` array literal through a
@@ -24,7 +28,9 @@ extends Object
 # Casting to ElevatorScene and building an explicitly-typed array before
 # assigning fixes it.
 
-const BOSS_CYCLE_LENGTH := 6
+const BOSS_CYCLE_LENGTH := 6  # keep in sync with floor_variant.hooks.gd
+const LOW_RATE := 1.6  # keep in sync with floor_variant.hooks.gd
+const HIGH_RATE := 2.2  # keep in sync with floor_variant.hooks.gd
 
 
 func is_boss_floor(floor_number: int) -> bool:
@@ -56,12 +62,9 @@ func endless_boss_floor(chain: ModLoaderHookChain) -> void:
 	# already-loaded reference instead of preloading it ourselves here.
 	var final_floor: FloorVariant = elevator.FINAL_FLOOR_VARIANT.duplicate(true)
 
-	# Boss encounter index: 0 for the first boss (floor 5), 1 for the second
-	# boss (floor 5 + BOSS_CYCLE_LENGTH), etc. Difficulty scales once per
-	# boss encounter rather than continuously per floor number.
-	var boss_encounter_index: int = (Util.floor_number - 5) / BOSS_CYCLE_LENGTH
-	var low: int = 10 + (boss_encounter_index * 2)
-	var high: int = 16 + (boss_encounter_index * 3)
+	var floors_since_first_boss: int = Util.floor_number - 5
+	var low: int = 10 + roundi(LOW_RATE * floors_since_first_boss)
+	var high: int = 16 + roundi(HIGH_RATE * floors_since_first_boss)
 	final_floor.level_range = Vector2i(low, high)
 
 	var typed_floors: Array[FloorVariant] = [final_floor]

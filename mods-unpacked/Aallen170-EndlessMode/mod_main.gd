@@ -28,3 +28,23 @@ func install_script_hook_files() -> void:
 		"res://scenes/final_boss/penthouse_boss.gd",
 		extensions_dir_path.path_join("scenes/final_boss/penthouse_boss.hooks.gd")
 	)
+	# TGM-9: scales boss cogs (and their mid-fight reinforcements) with the
+	# same curve the boss floor's own level_range uses, instead of the fixed
+	# DNA-preset level they fell back to. See cog.hooks.gd for the root cause.
+	ModLoaderMod.install_script_hooks(
+		"res://objects/cog/cog.gd",
+		extensions_dir_path.path_join("objects/cog/cog.hooks.gd")
+	)
+	# TGM-9 follow-up (2026-09-13): floor_variant.hooks.gd already existed
+	# (written as part of TGM-6/7's original normal-floor scaling curve) but
+	# was never actually registered here, so floor_variant.gd's own vanilla
+	# get_calculated_level_range() - the "I will not be testing how well
+	# balanced this is" exploding failsafe - kept running for every normal
+	# floor past floor 5 the whole time. That's why cogs on floor 7 (the
+	# first normal floor after the first boss) were still scaling far past
+	# what the player had built up for. Wiring this up applies the intended
+	# linear curve there too.
+	ModLoaderMod.install_script_hooks(
+		"res://scenes/game_floor/floor_variants/floor_variant.gd",
+		extensions_dir_path.path_join("scenes/game_floor/floor_variants/floor_variant.hooks.gd")
+	)
