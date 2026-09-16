@@ -76,6 +76,12 @@ func on_battle_finished(chain: ModLoaderHookChain) -> void:
 			partner.queue_free()
 	player.partners.clear()
 
+	# TGM-11: ToonTasks used to go blank after a boss loop because
+	# barrel_room.gd's clear_quests() ran unconditionally on every boss-floor
+	# entry. That's now fixed at the source in barrel_room.hooks.gd (which
+	# skips clear_quests() entirely so the player's existing ToonTasks and
+	# their progress carry straight through the fight), so nothing needs to
+	# happen here anymore - no quest list to refill.
 	Util.floor_number += 1
 	if SaveFileService.run_file:
 		SaveFileService.run_file.floor_choice = null
@@ -95,3 +101,4 @@ func apply_battle_ending_effects() -> void:
 		Globals.s_one_hour_win.emit()
 	if win_time < SaveFileService.progress_file.best_time or is_equal_approx(0.0, SaveFileService.progress_file.best_time):
 		SaveFileService.progress_file.best_time = player.game_timer.time
+
