@@ -35,6 +35,11 @@ var boss_battle := false
 var current_round := 0
 var has_moved : Array[Node3D] = []
 var is_round_ongoing := false
+## True from the moment the battle-win sequence begins (battle_win_movie, victory-dance
+## animation, reward spawn) until BattleService clears ongoing_battle. Battle-only Pocket
+## Pranks need to check this in addition to is_round_ongoing, since is_round_ongoing is
+## already false throughout this whole window but there are no cogs/battle UI left to act on.
+var is_battle_ending := false
 var force_watch_death: Array[Cog] = []
 var overkill_amounts: Dictionary[Variant, int] = {}
 var action_hit_rolls: Dictionary[BattleAction, bool] = {}
@@ -242,6 +247,7 @@ func round_over():
 
 func end_battle() -> void:
 	# End battle
+	is_battle_ending = true
 
 	# First call cleanup on all existing status effects
 	for _effect: StatusEffect in status_effects.duplicate():

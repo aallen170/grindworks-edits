@@ -119,7 +119,11 @@ func check_player_state() -> bool:
 	
 	if item.active_type == ItemActive.ActiveType.BATTLE or item.active_type == ItemActive.ActiveType.ANY:
 		if is_instance_valid(BattleService.ongoing_battle):
-			return not BattleService.ongoing_battle.is_round_ongoing
+			# Not mid-round AND not in the post-battle victory-dance/reward sequence (TGM-20):
+			# is_round_ongoing alone goes false as soon as the last cog dies, well before the
+			# battle actually finishes tearing down, which let battle-only pranks (fire hydrant,
+			# coin, etc.) be used against cogs/UI that no longer exist and crash the game.
+			return not BattleService.ongoing_battle.is_round_ongoing and not BattleService.ongoing_battle.is_battle_ending
 	elif item.active_type == ItemActive.ActiveType.REALTIME or item.active_type == ItemActive.ActiveType.ANY:
 		return player.controller.current_state.accepts_interaction()
 	elif item.active_type == ItemActive.ActiveType.WHENEVER:
