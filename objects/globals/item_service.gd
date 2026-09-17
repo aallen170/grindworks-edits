@@ -3,6 +3,22 @@ extends Node
 ## Used for UI. Only applies to items with "remember_item" true
 signal s_item_applied(item: Item)
 
+## Bug fix (found 2026-09-16 investigating a silent native crash right after a
+## burst of chained item rerolls): get_random_item() falls back to this pool
+## via get_random_roll_fail_item() whenever the pool it was actually asked for
+## is fully exhausted (every item seen/locked/flagged off). That fallback pool
+## is small (16 items) and, being the universal catch-all, gets pulled from far
+## more often than any single normal pool - so it's the first thing to run out
+## of unseen items on a long run, well before seen_items next resets (TGM-17
+## only resets it once per boss floor cleared). Once THIS pool is also fully
+## discarded, get_random_item() used to call get_random_roll_fail_item() again,
+## which loads this exact same pool and hits the exact same exhausted state -
+## infinite recursion, with no base case, silently overflowing the native call
+## stack (no GDScript-level "stack overflow" diagnostic in an exported build,
+## just the process dying mid-print). See get_random_item()'s is_fail_pool
+## handling below for the fix.
+const ROLL_FAILS_POOL_PATH := "res://objects/items/pools/item_roll_fails.tres"
+
 var seen_items: Array[Item] = []
 # Items currently available for collection in any way
 var items_in_play: Array[Item] = []
@@ -88,6 +104,12 @@ func get_random_item(pool: ItemPool, override_rolls := false) -> Item:
 	if not pool.low_roll_override == Item.Rarity.NIL:
 		rarity_goal = pool.low_roll_override as int
 	
+	# The roll-fail catch-all pool is exempt from the seen-items no-repeat
+	# filter below - see the ROLL_FAILS_POOL_PATH comment up top. A duplicate
+	# consolation-prize item is harmless; recursing forever because even the
+	# fallback pool ran out of "unseen" items is not.
+	var is_fail_pool := pool.resource_path == ROLL_FAILS_POOL_PATH
+	
 	# Trim out all seen items from pool
 	var discard_pool: Array[Item] = []
 	for item in pool:
@@ -97,11 +119,17 @@ func get_random_item(pool: ItemPool, override_rolls := false) -> Item:
 			discard_pool.append(item)
 		if not flag_check(item):
 			discard_pool.append(item)
-		if item in seen_items:
+		if not is_fail_pool and item in seen_items:
 			discard_pool.append(item)
 	
 	# If no item can be given to the player, just give them treasure
 	if discard_pool.size() == pool.size():
+		if is_fail_pool:
+			# Every item in the fallback pool itself is locked/flagged off (not
+			# just "seen" - that check is skipped above). There's nowhere left
+			# to fall back to, so hand back its first item outright rather than
+			# calling get_random_roll_fail_item() again and recursing forever.
+			return load(pool.items[0]).duplicate(true)
 		return get_random_roll_fail_item()
 	
 	# Quality-scaled rarity
@@ -135,7 +163,11 @@ func get_random_item(pool: ItemPool, override_rolls := false) -> Item:
 					discard_pool.append(item)
 	
 	# If STILL no item can be given to the player, just give them treasure
+	# (unless this already IS the fallback pool - see is_fail_pool above, same
+	# anti-recursion reasoning applies here as at the first exhaustion check).
 	if discard_pool.size() == pool.size():
+		if is_fail_pool:
+			return load(pool.items[0]).duplicate(true)
 		return get_random_roll_fail_item()
 	
 	var file_name := pool.resource_path.get_file()
@@ -147,11 +179,13 @@ func get_random_item(pool: ItemPool, override_rolls := false) -> Item:
 		rolled_item = load(RNG.channel(res_name).pick_random(pool.items))
 		retries += 1
 		if retries >= retry_amt:
+			if is_fail_pool:
+				return load(pool.items[0]).duplicate(true)
 			return get_random_roll_fail_item()
 	return rolled_item
 
 func get_random_roll_fail_item() -> Item:
-	return get_random_item(load("res://objects/items/pools/item_roll_fails.tres"), true)
+	return get_random_item(load(ROLL_FAILS_POOL_PATH), true)
 
 func seen_item(item: Item, allow_duplicate := false):
 	if not allow_duplicate and item.resource_path == "":

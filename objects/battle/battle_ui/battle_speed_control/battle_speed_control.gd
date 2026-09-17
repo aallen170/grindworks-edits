@@ -21,6 +21,13 @@ func _exit_tree() -> void:
 	# (it's a child of BattleManager, freed when the battle ends), so make
 	# sure Engine.time_scale can never be left stuck above 1.0 once the
 	# battle is actually over, even if it was pushed there live mid-round.
+	#
+	# Debug tooling: Globals.debug_persist_timescale (toggled via the
+	# "persist_timescale" dev console command) skips this reset too, so it
+	# doesn't undo the same carry-over battle_manager.gd's
+	# revert_battle_speed() is meant to skip.
+	if Globals.debug_persist_timescale:
+		return
 	Engine.time_scale = 1.0
 
 func set_speed(value: float) -> void:

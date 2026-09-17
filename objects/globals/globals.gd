@@ -4,6 +4,16 @@ const VERSION_NUMBER := "v1.2.7"
 
 ## Holds any value you may want accessible globally and quickly
 
+## Debug tooling (TGM-2 follow-up, added 2026-09-16): when true, a battle
+## ending no longer forces Engine.time_scale back to 1.0 (see
+## battle_manager.gd's revert_battle_speed() and battle_speed_control.gd's
+## _exit_tree(), both added by TGM-2 to fix a time_scale leak where the
+## in-battle speed slider could get stuck applied outside of battle). Lets
+## a sped-up battle speed setting carry over into overworld exploration too,
+## for faster manual testing. Toggled via the "persist_timescale" dev
+## console command - off by default so normal play keeps TGM-2's fix intact.
+var debug_persist_timescale := false
+
 func _init():
 	set_meta(GameLoader.NO_LOADER_ASSURANCE, true)
 	GameLoader.queue_into(GameLoader.Phase.GAME_START, self, {
