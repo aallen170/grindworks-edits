@@ -82,6 +82,22 @@ func on_battle_finished(chain: ModLoaderHookChain) -> void:
 	# skips clear_quests() entirely so the player's existing ToonTasks and
 	# their progress carry straight through the fight), so nothing needs to
 	# happen here anymore - no quest list to refill.
+
+	# TGM-17: ItemService.seen_items never gets cleared past character
+	# creation (item_service.gd's on_floor_end() - wired up to fire every
+	# floor - is an empty stub; reset() only runs on a full save-file reset).
+	# Once every item in a pool has been seen, get_random_item() falls back
+	# to the roll-fail pool forever, which is what "runs dry" after enough
+	# floors. Per Andrew (2026-09-16): rather than clearing every floor
+	# (which would let duplicates show up even before the first boss) or
+	# never within a run (the reported bug), duplicates should only become
+	# possible once a boss floor has actually been cleared - so the pool
+	# stays exhausted-once-seen for a normal 5-floor run, and resets on each
+	# Endless Mode loop rather than piling up seen items across the whole
+	# run. Clearing here (once per boss defeated, only on "keep going") is
+	# the natural hook point for that.
+	ItemService.seen_items.clear()
+
 	Util.floor_number += 1
 	if SaveFileService.run_file:
 		SaveFileService.run_file.floor_choice = null

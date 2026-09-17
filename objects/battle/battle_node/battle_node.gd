@@ -72,6 +72,36 @@ func body_entered(body: Node3D):
 		s_player_entered.emit(body)
 
 func player_entered(player : Player):
+	# Reentrancy guard (found 2026-09-16 investigating an intermittent crash
+	# during battle initialization at high Engine.time_scale settings):
+	# player_entered() can be reached two different ways for the very same
+	# battle - through this Area3D's own body_entered signal (the normal
+	# overworld case), and, in scripted battles like cog_building_floor.gd and
+	# penthouse_boss.gd, via a direct battle.player_entered(Util.get_player())
+	# call that bypasses the Area3D entirely. Nothing previously stopped both
+	# paths from firing for the same battle: `monitoring` was only ever set to
+	# false at the very end of this function, after several `await`s (the
+	# intro movie, the movement tweens, the initialization barrier), so a
+	# physical overlap trigger could still land while a scripted call (or
+	# another overlap) was already mid-initialization. Two concurrent
+	# player_entered() calls means two BattleManagers, two threaded battle UI
+	# loads, and two sets of cog/player tweens all fighting over the same
+	# nodes - exactly the kind of race that crashes natively with no script
+	# error. This is normally too slow to actually collide, but at higher
+	# time_scale the elevator delays/animations/tweens leading into a fight
+	# compress enough in real time (ResourceLoader's threaded load doesn't
+	# speed up with time_scale, but everything else here does) that both
+	# invocations can end up in flight together. `state` was already declared
+	# above for exactly this purpose but never wired up - doing that here
+	# closes the gap.
+	if state != BattleState.INACTIVE:
+		return
+	state = BattleState.INITIALIZING
+	# Disable monitoring immediately (not just at the end of this function) so
+	# no further overlap can re-trigger body_entered while we're still mid-
+	# initialization.
+	set_deferred('monitoring', false)
+
 	# Disable game timer tick until battle is initialized
 	player.game_timer_tick = false
 	
@@ -84,6 +114,10 @@ func player_entered(player : Player):
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	
 	if not player.controller.current_state.accepts_interaction():
+		# Bail out of initialization entirely - undo the guard above so this
+		# battle node can still be triggered normally later.
+		state = BattleState.INACTIVE
+		set_deferred('monitoring', true)
 		return
 	player.state = Player.PlayerState.STOPPED
 	player.set_animation('neutral')
@@ -168,8 +202,9 @@ func player_entered(player : Player):
 	bm.start_battle(cogs,self)
 	bm.s_focus_char.connect(focus_character)
 	
-	# Disable self
-	set_deferred('monitoring',false)
+	# Battle is fully underway now - monitoring was already disabled up front
+	# by the reentrancy guard at the top of this function.
+	state = BattleState.ACTIVE
 	
 	# Hook into battle ending
 	bm.s_battle_ending.connect(func(): s_battle_ending.emit())

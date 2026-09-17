@@ -104,6 +104,11 @@ func apply_battle_speed() -> void:
 	Engine.time_scale = SaveFileService.settings_file.battle_speed
 
 func revert_battle_speed() -> void:
+	# Debug tooling: Globals.debug_persist_timescale (toggled via the
+	# "persist_timescale" dev console command) skips this reset so a sped-up
+	# battle speed carries over into overworld exploration for testing.
+	if Globals.debug_persist_timescale:
+		return
 	Engine.time_scale = 1.0
 
 func begin_turn():

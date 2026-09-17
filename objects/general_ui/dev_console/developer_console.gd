@@ -104,6 +104,7 @@ var command_types: Array[Command] = [
 	UnlockAchievementsCommand.new(),
 	ForceSaveCommand.new(),
 	GodModeCommand.new(),
+	PersistTimescaleCommand.new(),
 ]
 
 func parse_command(text: String) -> void:
@@ -670,6 +671,26 @@ class ForceSaveCommand extends Command:
 		return "force save"
 	func run(_args) -> void:
 		SaveFileService.save()
+
+class PersistTimescaleCommand extends Command:
+	# TGM-2 follow-up: TGM-2 fixed a bug where the in-battle speed slider
+	# could leave Engine.time_scale stuck above 1.0 outside of battle, by
+	# forcing it back to 1.0 in two places whenever a battle ends
+	# (battle_manager.gd's revert_battle_speed() and
+	# battle_speed_control.gd's _exit_tree()). That's the right behavior for
+	# normal play, but it also means a sped-up battle speed setting never
+	# carries over into overworld exploration, which is exactly what's
+	# useful for testing (e.g. speed-running to a floor's exit/boss).
+	# Toggles Globals.debug_persist_timescale, which both of those reset
+	# points check and skip when true.
+	func get_prefix() -> String:
+		return "persist_timescale"
+	func run(_args: Array) -> void:
+		Globals.debug_persist_timescale = not Globals.debug_persist_timescale
+		if Globals.debug_persist_timescale:
+			submit_print("Timescale will no longer reset to 1.0 when a battle ends.")
+		else:
+			submit_print("Timescale will reset to 1.0 when a battle ends again (normal behavior).")
 
 class GodModeCommand extends Command:
 	# Debug/testing shortcut: bundles a bunch of the individual "set stats ..."

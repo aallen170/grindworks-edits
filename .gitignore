@@ -21,3 +21,6 @@
 # Exported game builds (Windows/console wrapper + packed data)
 *.exe
 *.pck
+
+# Miscellaneous
+commit_msg.txt
