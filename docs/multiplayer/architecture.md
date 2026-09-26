@@ -304,6 +304,77 @@ This covers battle rewards only. Chests found while exploring, and whether `Item
 
 ---
 
+### D17 — RNG and floor generation: host generates everything, replicates results
+*TGM-25, 2026-09-24 — v1, revisitable*
+
+Proposed by Claude on the strength of D3/D9 plus the consumption-order risk the ticket describes;
+confirmed by Andrew after reviewing the measured worst-case payload numbers below, not just as a
+go-ahead on the next action.
+
+The host is the only place any `RNG` channel is ever drawn. Floor layout, cog levels/DNA/attributes,
+item rolls, quest objectives — every one of the 68 named channels in `rng.gd` (the description's
+estimate of "roughly thirty" undercounts it) — are rolled once, host-side, and the results are
+replicated to clients. No client ever calls `RNG.channel()` for anything gameplay-relevant.
+
+This was close to already decided. D3 names "item rolls" as host-owned state, and D9 says the host's
+authoritative run consists of "floor, `RNG` channels, items in play and every toon, all in memory" —
+which only makes sense if the host is the sole place those channels live and advance, not if every
+client is also running a synchronized copy. Seed-share (clients regenerate the same content locally
+from a shared seed) and the hybrid option (seed-share layout only, host-authoritative for the rest)
+were both considered and rejected on that basis, and confirmed by measurement below.
+
+**Why not seed-share, given the risk it avoids.** The ticket's own premise is right that `rng.gd` is
+well-built for this — a seeded, channel-based autoload — but the risk is consumption order: any
+channel drawn in response to a local-only event (a UI interaction, a client-side timer, one player
+opening a chest before another) desynchronises every later draw from that channel on that client.
+Nothing in the game today has ever had to guarantee identical draw order across machines, and auditing
+178 call sites across 68 channels for one that breaks this invariant — now or in every future change —
+is a standing tax that host-generates avoids entirely by construction.
+
+**Bandwidth, measured rather than assumed.** The worst-case floor in the repo
+(`res://scenes/game_floor/floor_variants/base_floors/the_factory.tres`, 15 effective rooms once its
+one-time room is counted) was used to build a realistic worst-case replication payload — full room
+picks, max cog count (4) per battle room with every cog forced to the worst case (fused, skelecog, mod
+cog), and one reward-chest item per player per battle room — and measured with Godot's own
+`var_to_bytes()`: **8.5 KB to compute, ~34 KB total host egress across 4 clients, once per floor**.
+Seed-sharing just the room-layout portion instead would cost 36 bytes instead of 2,476 — a real
+saving, but only on the `rooms` bucket. Cogs (3,752 bytes) and items (2,408 bytes) are host-only either
+way, since hybrid never proposed seed-sharing those. So hybrid's entire bandwidth case is ~2.4 KB saved
+out of an 8.5 KB payload, once every several minutes of play — not enough to justify keeping a second,
+client-side RNG-consumption-order-must-match-exactly system alive for floor layout alone, which is the
+exact hazard this decision exists to avoid.
+
+**What becomes host-only:** all 68 channels, by construction — there is no dual-generation path
+anywhere, so there is no per-channel authority split to make. What does vary per channel is
+*replication timing*, which is implementation guidance for TGM-26/TGM-23 rather than an authority
+question: floor/room/cog/quest channels (`ChannelFloors`, `ChannelRoomLogic`, `ChannelCogLevels`,
+`ChannelCogDNA`, `ChannelQuests`, etc.) get bulk-synced once at floor-generation time; item-use and
+interaction channels (`ChannelChestRolls`, the `item_service.gd` drop-rate channels, puzzle/mole/shop
+channels, etc.) get synced as individual event results when the triggering action happens.
+
+**Per-session isolation:** not needed. `rng.gd` stays a process-global autoload. This is direct-IP P2P
+(D4), not a server hosting multiple concurrent sessions, so there is exactly one authoritative run per
+host process either way.
+
+**`ChannelTrueRandom`:** no special handling needed. It's already an escape hatch for a couple of
+non-deterministic, cosmetic draws (the title-screen character randomizer, a battle roll) that bypass
+the seeded channel system entirely. Since only the host ever calls it, whatever it returns is
+automatically the single source of truth.
+
+**Resolves the pool-mutation open question below:** `seed_misty.gd` mutates the global
+`Globals.GRUNT_COG_POOL` on pickup (`Globals.add_standard_cog`) and reverts it on exit. Under
+host-generates, both the mutation and every subsequent roll against that pool happen host-side, so
+there's nothing for clients to keep in sync — a non-issue under this model.
+
+**What wasn't verified:** the 178 call sites were classified by their enclosing function name
+(structural generation vs. runtime/interaction), not by fully reading every site's surrounding logic —
+solid signal, not exhaustive proof. The payload measurement is a static worst-case built from real
+resource data (`FloorVariant`/`DepartmentFloor`/`CogPool`/`Item` resources, via a throwaway
+`EditorScript`, not committed), not a live network capture — no networking code exists yet to capture
+from. Instance-rolled item stats (e.g. `bee_hive_hairdo.gd`'s `roll_for_stats()`) were modeled as four
+placeholder floats rather than traced per item type; this could undercount the `items` bucket somewhat
+but not by an amount that changes the conclusion at these totals.
+
 ## Codebase findings that shape the design
 
 Measured against repo version `1.2.7`, Godot `4.6`, on 2026-09-17.
@@ -446,9 +517,8 @@ records its owner.
   get different ids.
 - **Exploration chests and shared seen-items** (TGM-23). First-come or per-player, and whether
   `ItemService.seen_items` is shared across players' rolls.
-- **Pool mutation by items.** `seed_misty.gd` adds a golden goose cog to `GRUNT_COG_POOL` on pickup and
-  removes it on exit, so one player's item changes a pool that must agree across peers. Belongs to
-  TGM-25.
+- ~~**Pool mutation by items.**~~ **Settled by D17 (TGM-25):** `seed_misty.gd`'s `GRUNT_COG_POOL`
+  mutation is host-side only, same as every other RNG draw, so it's a non-issue under host-generates.
 - **Console targeting.** D13 says a client asks the host for a debug action. The console commands seen
   so far act on the local player, so how a host applies one to a client's toon is not decided. How
   commands pick their subject has not been read. Planned as a separate research ticket.
@@ -457,8 +527,9 @@ records its owner.
 
 ## Not yet decided
 
-Floor generation determinism and the `RNG` sync model (TGM-25), and the multiplayer design ruleset — turn economy, cog scaling, group Lure, revival,
-item buckets (TGM-23).
+The multiplayer design ruleset — turn economy, cog scaling, group Lure, revival, item buckets (TGM-23).
+
+Floor generation determinism and the `RNG` sync model is settled as D17 (TGM-25).
 
 Run ownership and save state (TGM-22) is settled as D9–D16; its leftover edge cases are listed under
 *Open questions*.
