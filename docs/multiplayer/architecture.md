@@ -436,12 +436,17 @@ instantiated, the time bonus could decay once per player. Not traced; verify und
 
 ## Known hazards
 
-**Runtime-created `MultiplayerSynchronizer` node paths.** Godot issue
-[#87426](https://github.com/godotengine/godot/issues/87426) reports that a `MultiplayerSynchronizer`
-created at runtime can initialise before its scene is in the tree and fail to resolve its root
-path. Reported against `4.2.1`; **status on `4.6` is unconfirmed and should be verified before
-relying on runtime-spawned synchronizers.** This matters here because floors and players are both
-built at runtime.
+**Runtime-created `MultiplayerSynchronizer` node paths — checked on 4.6.2, does not reproduce.**
+Godot issue [#87426](https://github.com/godotengine/godot/issues/87426) reports that a
+`MultiplayerSynchronizer` created at runtime can initialise before its scene is in the tree and fail to
+resolve its root path. Reported against `4.2.1`; the issue is still open upstream. Tested on Godot
+`4.6.2` (headless, host and client over `ENetMultiplayerPeer` on localhost, TGM-26, 2026-09-26): a
+synchronizer added before its body enters the tree, added after, added from the body's `_ready()`, built
+in a `MultiplayerSpawner` spawn function, and saved inside a `.tscn` that is spawned or auto-spawned all
+replicated `position` (and a child node's `rotation`) with no errors, including a body whose authority is
+a client peer. **Decision: the replicated toon body carries a `MultiplayerSynchronizer`**, not explicit
+`@rpc` calls. Not covered: real latency, Windows exported builds, long sessions. Revisit if the two-build
+LAN test on TGM-26 shows otherwise.
 
 **Autoload property sync needs absolute paths.** Syncing a property on an autoload through a
 `MultiplayerSynchronizer` requires the `/root/AutoloadName:property` form; the shorter spellings
@@ -453,7 +458,8 @@ autoload properties directly.
 needs `@rpc("any_peer", "call_local", "reliable")`. Getting this wrong fails quietly.
 
 **Multiplayer authority must be assigned before `_ready()`** and must be set consistently on every
-peer, or RPCs targeting the node fail.
+peer, or RPCs targeting the node fail. For a client-owned toon body, call `set_multiplayer_authority(peer_id)` inside the
+`MultiplayerSpawner` spawn function so it is set before the node enters the tree on every peer.
 
 ---
 
