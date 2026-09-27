@@ -3,7 +3,9 @@ class_name PlayerState3D
 
 @onready var player: Player = owner
 @onready var toon: Toon = %Toon
-@onready var camera: PlayerCamera = %PlayerCamera
+## Null on a non-local (non-authority) body, since the local-only camera
+## layer is only instantiated for the local player -- see TGM-39.
+@onready var camera: PlayerCamera = get_node_or_null("%PlayerCamera")
 @onready var move_sfx: AudioStreamPlayer = %MoveSFX
 
 #region Override this in subclasses
@@ -77,7 +79,9 @@ func _calc_movement_style_standard(origin: Node3D = camera) -> Vector3:
 		input_dir = Input.get_vector('move_left', 'move_right', 'mouse_forward', 'move_back')
 	
 	var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-	direction = direction.rotated(Vector3(0, 1, 0), origin.global_rotation.y)
+	# origin (normally the local camera) is null on a non-local body -- fall
+	# back to the body's own facing rather than crashing.
+	direction = direction.rotated(Vector3(0, 1, 0), origin.global_rotation.y if origin else global_rotation.y)
 	if direction:
 		moving = true
 		velocity.x = direction.x * speed
@@ -117,7 +121,8 @@ func _movement_style_tank(delta: float) -> void:
 	var input_turn: float = input[1]
 	var turn_speed := TURN_SPEED * player.stats.get_stat('speed')
 	toon.rotation.y += (deg_to_rad(turn_speed * delta) * -input_turn)
-	camera.rotation.y += (deg_to_rad(turn_speed * delta) * -input_turn)
+	if camera:
+		camera.rotation.y += (deg_to_rad(turn_speed * delta) * -input_turn)
 	
 	if is_on_floor() and not _jumped_this_frame and can_jump:
 		if input_dir == 1 and sprint:
@@ -304,6 +309,9 @@ func capture_mouse() -> void:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func handle_camera() -> void:
+	# Local-only: there is no camera on a non-local body (TGM-39).
+	if not camera:
+		return
 	# Camera zoom
 	if Input.is_action_just_pressed('zoom_in'):
 		player.camera_dist = max(player.camera_dist-0.5,1.5)

@@ -385,12 +385,25 @@ better news than the raw count suggests: gating that single assignment on
 `is_multiplayer_authority()` makes `Util.player` mean "the local player" and leaves every read
 site working. It strongly favours the registry option under TGM-24 over a broad refactor.
 
-**`player.tscn` bundles per-player camera and the entire HUD.** The scene contains
+~~**`player.tscn` bundles per-player camera and the entire HUD.** The scene contains
 `PlayerCamera` and a `GUI` subtree (`LaffMeter`, `BeanJar`, `FloorLabel`, `GameTimer`,
 `ItemDescriptions`, `ActiveItemUI`, `QuestNotification`). Instantiating it for a remote player
 would produce four cameras and four HUDs. The scene has to be split into a replicated toon body
 and a local-only camera/HUD layer before any replication work. This is the largest structural
-change M1 implies.
+change M1 implies.~~
+
+**Resolved by TGM-39 (2026-09-27).** `PlayerCamera` and the `GUI` subtree were pulled out of
+`player.tscn` into `objects/player/player_camera.tscn` (already existed) and a new
+`objects/player/player_hud.tscn`. `player.gd` instantiates both, dynamically, from `_enter_tree()`,
+only `if is_multiplayer_authority()`, and re-owners their nodes to `self` so the existing
+`%PlayerCamera`/`%GUI`/etc. unique-name lookups keep working unchanged. `player.tscn` itself now
+contains only the replicated body (`Toon`, `CollisionShape3D`, `Head`, `MoveSFX`, `Items`,
+`Controller`/states) plus the `Util.player` assignment, gated the same way per TGM-24. Every
+camera/HUD-dependent read in `player.gd` and `player_state_3d.gd` (`camera`, `gui`, `laff_meter`,
+`bean_jar`, `game_timer`, `active_item_ui`, `boost_queue`, `item_descriptions`) is now
+null-guarded, since these are only non-null on the local/authority instance. Not covered here:
+which body actually gets local input (movement still reads `Input` unconditionally in
+`player_state_3d.gd`) -- that's an input-authority decision left to TGM-37.
 
 **The player is instantiated at runtime in two places**, both via `load(...).instantiate()`:
 `scenes/elevator_scene/elevator_scene.gd:32` and `scenes/game_floor/game_floor.gd:144`. Under a
@@ -428,9 +441,13 @@ item to `Util.get_player()`. A remote toon walking near an item could drive the 
 and description. `WorldItem.collect()` similarly shows its popup on whichever machine runs it, and uses
 `Util.get_player()` in places rather than its `player` parameter.
 
-**Run timer decay, unverified.** `game_timer.gd` calls `ScoreTally.modify_score(ChannelTimeBonus, -1)`
+~~**Run timer decay, unverified.** `game_timer.gd` calls `ScoreTally.modify_score(ChannelTimeBonus, -1)`
 every second from `_process()`, and `player.tscn` bundles one per player. If every player's HUD is
-instantiated, the time bonus could decay once per player. Not traced; verify under TGM-24.
+instantiated, the time bonus could decay once per player. Not traced; verify under TGM-24.~~
+
+**Resolved by TGM-39 (2026-09-27).** Moot now: `GameTimer` lives in `player_hud.tscn`, which is only
+instantiated for the local/authority player, so there is exactly one `GameTimer` ticking regardless
+of player count.
 
 ---
 

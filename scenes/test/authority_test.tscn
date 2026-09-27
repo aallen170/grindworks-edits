@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://r8mt2oanaeir"]
+
+[ext_resource type="Script" uid="uid://cuyc1cxq6asm5" path="res://scenes/test/authority_test.gd" id="1_script"]
+
+[node name="AuthorityTest" type="Node3D" unique_id=1993811501]
+script = ExtResource("1_script")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1433528375]
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 4, 8)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=832464166]
+transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 0, 5, 0)
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=437784472]
+
+[node name="ResultLabel" type="Label" parent="CanvasLayer" unique_id=679436869]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 900.0
+offset_bottom = 260.0
+text = "Running TGM-39 authority test..."

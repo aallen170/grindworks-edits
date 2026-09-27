@@ -88,12 +88,17 @@ func clear_track() -> void:
 
 func get_random_gag() -> ToonAttack:
 	var track: Track = player.stats.character.gag_loadout.loadout.pick_random()
-	var index := randi_range(get_min_gag_level(track), player.stats.gags_unlocked[track.track_name] - 1)
+	# Clamp: gags_unlocked can exceed track.gags.size() on a corrupted/
+	# godmode-touched save (see TGM track_frame.gd fix); don't let that
+	# translate into an out-of-bounds index here.
+	var highest := clampi(player.stats.gags_unlocked[track.track_name] - 1, 0, track.gags.size() - 1)
+	var index := randi_range(get_min_gag_level(track), highest)
 	return track.gags[index]
 
 func get_min_gag_level(track: Track) -> int:
 	var absolute_min := maxi(Util.floor_number - 2, 0)
-	return mini(absolute_min, player.stats.gags_unlocked[track.track_name] - 1)
+	var highest := clampi(player.stats.gags_unlocked[track.track_name] - 1, 0, track.gags.size() - 1)
+	return mini(absolute_min, highest)
 
 func find_gag_button(gag: ToonAttack) -> GagButton:
 	var track := player.stats.character.gag_loadout.get_action_track(gag)

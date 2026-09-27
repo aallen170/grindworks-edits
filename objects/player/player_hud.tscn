@@ -1,0 +1,119 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" uid="uid://dmbp7gb7omh12" path="res://objects/player/floor_label.gd" id="1_dh5ch"]
+[ext_resource type="PackedScene" uid="uid://b8xccla84x6gh" path="res://objects/quests/quest_notification/quest_notification.tscn" id="2_2bvb5"]
+[ext_resource type="PackedScene" uid="uid://cumojo4vtowmv" path="res://objects/toon/laff_meter.tscn" id="3_553ug"]
+[ext_resource type="PackedScene" uid="uid://bvnev7qmiu3dq" path="res://objects/general_ui/bean_jar/bean_jar.tscn" id="4_2bgkf"]
+[ext_resource type="FontFile" uid="uid://cup2yr5w7or1l" path="res://fonts/Minnie.TTF" id="5_fnojw"]
+[ext_resource type="PackedScene" uid="uid://5hvtmu8sf5ub" path="res://objects/player/ui/timer/game_timer.tscn" id="6_0c65h"]
+[ext_resource type="Script" uid="uid://bnmo4cxoda23r" path="res://objects/player/boost_text_queue.gd" id="7_468de"]
+[ext_resource type="PackedScene" uid="uid://b4tvnlm52jblo" path="res://objects/items/ui/item_descriptions/item_description.tscn" id="8_ajyaa"]
+[ext_resource type="PackedScene" uid="uid://6se4ghde6e11" path="res://objects/player/ui/active_item_ui/active_item_ui.tscn" id="9_r5k7d"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_530nt"]
+font = ExtResource("5_fnojw")
+font_size = 24
+shadow_color = Color(0, 0, 0, 1)
+
+[node name="GUI" type="Control"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="QuestNotification" parent="." instance=ExtResource("2_2bvb5")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="LaffMeter" parent="." instance=ExtResource("3_553ug")]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 2
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = -111.0
+offset_right = 100.0
+offset_bottom = -21.0
+grow_horizontal = 1
+grow_vertical = 0
+scale = Vector2(1.2, 1.2)
+
+[node name="BeanJar" parent="." instance=ExtResource("4_2bgkf")]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 2
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 15.0
+offset_top = -228.0
+offset_right = 115.0
+offset_bottom = -103.0
+grow_horizontal = 1
+grow_vertical = 0
+scale = Vector2(0.85, 0.85)
+pivot_offset = Vector2(50, 62.5)
+
+[node name="FloorLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -113.0
+offset_top = -30.0
+offset_right = -5.0
+offset_bottom = -5.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "Floor 0"
+label_settings = SubResource("LabelSettings_530nt")
+horizontal_alignment = 2
+script = ExtResource("1_dh5ch")
+
+[node name="GameTimer" parent="." instance=ExtResource("6_0c65h")]
+unique_name_in_owner = true
+layout_mode = 0
+
+[node name="BoostTextQueue" type="Control" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_top = -68.0
+offset_bottom = -68.0
+grow_horizontal = 2
+grow_vertical = 0
+script = ExtResource("7_468de")
+
+[node name="ItemDescriptions" parent="." instance=ExtResource("8_ajyaa")]
+unique_name_in_owner = true
+visible = false
+
+[node name="ActiveItemUI" parent="." instance=ExtResource("9_r5k7d")]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 2
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 0.0
+anchor_bottom = 1.0
+offset_left = 14.0
+offset_top = -324.0
+offset_right = 116.0
+offset_bottom = -234.0
+grow_horizontal = 1
+grow_vertical = 0

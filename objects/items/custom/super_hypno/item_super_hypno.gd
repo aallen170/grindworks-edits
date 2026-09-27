@@ -103,5 +103,9 @@ func get_knockback() -> int:
 
 func get_reference_lure() -> GagLure:
 	var stats := player.stats
-	var highest_lure: GagLure = stats.character.gag_loadout.get_track_of_name('Lure').gags[stats.gags_unlocked['Lure'] - 1]
+	var lure_track := stats.character.gag_loadout.get_track_of_name('Lure')
+	# Clamp: same class of bug as track_frame.gd -- gags_unlocked can exceed
+	# the track's gag count on a corrupted/godmode-touched save.
+	var index := clampi(stats.gags_unlocked['Lure'] - 1, 0, lure_track.gags.size() - 1)
+	var highest_lure: GagLure = lure_track.gags[index]
 	return highest_lure
