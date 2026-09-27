@@ -50,7 +50,14 @@ func get_color() -> Color:
 		return Color.NAVY_BLUE
 
 func collect() -> void:
-	Util.get_player().stats.gags_unlocked[track] += 1
+	var stats := Util.get_player().stats
+	var track_size: int = get_track(track).gags.size()
+	# Clamp instead of blindly incrementing: godmode (or any other source that
+	# maxes gags_unlocked ahead of normal progression) can leave this already
+	# at track_size, and incrementing past it corrupts the save (gags_unlocked
+	# stores a raw index+1 elsewhere -- see get_gag_got()) and crashes the
+	# next read of it.
+	stats.gags_unlocked[track] = mini(stats.gags_unlocked[track] + 1, track_size)
 	resource.item_name = get_gag_got().action_name
 
 func get_track(track_name: String) -> Track:
@@ -81,4 +88,8 @@ func get_hat() -> Array[String]:
 
 func get_gag_got() -> ToonAttack:
 	var gag_track := Util.get_player().stats.character.gag_loadout.get_track_of_name(track)
-	return gag_track.gags[Util.get_player().stats.gags_unlocked[track] - 1]
+	# Clamp the index defensively: an out-of-range gags_unlocked value here
+	# (e.g. from an already-corrupted save, or a mod/debug tool that doesn't
+	# go through collect()'s clamp) should not crash the game.
+	var index: int = clampi(Util.get_player().stats.gags_unlocked[track] - 1, 0, gag_track.gags.size() - 1)
+	return gag_track.gags[index]

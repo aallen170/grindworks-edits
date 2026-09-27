@@ -6,6 +6,13 @@ const DEATH_THRESHOLD := -20.0
 const IFRAME_TIME := 3.0
 const PAUSE_DELAY := 0.25
 
+## Local-only layer (camera + HUD). Only instantiated for the local/authority
+## player -- see TGM-39. Never spawned for a remote player's body, so a
+## player controlled by another peer never creates a second camera or HUD.
+const PLAYER_CAMERA_SCENE: PackedScene = preload("res://objects/player/player_camera.tscn")
+const PLAYER_HUD_SCENE: PackedScene = preload("res://objects/player/player_hud.tscn")
+const PLAYER_CAMERA_Y_OFFSET := 1.06085
+
 ## Object states
 enum PlayerState {
 	WALK,
@@ -42,13 +49,20 @@ static var PlayerStateNameToState := ToonUtils.reverse_dictionary(PlayerStateToN
 
 ## Child References
 @onready var controller: FiniteStateMachine3D = %Controller
-@onready var camera: PlayerCamera = %PlayerCamera
+
+## Local-only (camera/HUD) child references. These are null on any instance
+## that is not the local multiplayer authority, since the local layer is
+## never instantiated for one -- guard every use with a null/is_instance_valid
+## check rather than assuming these are present.
+@onready var camera: PlayerCamera = get_node_or_null("%PlayerCamera")
 @onready var camera_dist: float:
 	set(x):
+		if not camera:
+			return
 		var cam_tween := create_tween()
 		cam_tween.tween_property(camera, 'spring_length', x, 0.1)
 	get:
-		return camera.spring_length
+		return camera.spring_length if camera else 0.0
 
 var control_style: bool:
 	get: return SaveFileService.settings_file.control_style
@@ -57,9 +71,9 @@ var run_speed := 8.0
 var gravity := 16.0
 var ignore_battles := false
 
-@onready var gui: Control = %GUI
-@onready var laff_meter := %LaffMeter
-@onready var bean_jar := %BeanJar
+@onready var gui: Control = get_node_or_null("%GUI")
+@onready var laff_meter := get_node_or_null("%LaffMeter")
+@onready var bean_jar := get_node_or_null("%BeanJar")
 @onready var toon: Toon = $Toon
 @onready var character: PlayerCharacter:
 	get:
@@ -69,17 +83,19 @@ var ignore_battles := false
 			return null
 		return stats.character
 @onready var item_node := $Items
-@onready var boost_queue: BoostQueue = %BoostTextQueue
+@onready var boost_queue: BoostQueue = get_node_or_null("%BoostTextQueue")
 
-@onready var game_timer: Control = %GameTimer
+@onready var game_timer: Control = get_node_or_null("%GameTimer")
 var game_timer_tick := false:
 	set(x):
 		if not lock_game_timer:
 			game_timer_tick = x
-			if x: game_timer.set_timer_color(Color.WHITE)
-			else: game_timer.set_timer_color(Color.YELLOW)
+			if game_timer:
+				if x: game_timer.set_timer_color(Color.WHITE)
+				else: game_timer.set_timer_color(Color.YELLOW)
 var lock_game_timer := false
-@onready var active_item_ui : Control = %ActiveItemUI
+@onready var active_item_ui: Control = get_node_or_null("%ActiveItemUI")
+@onready var item_descriptions: CanvasLayer = get_node_or_null("%ItemDescriptions")
 
 var last_damage_source: String = "Something"
 
@@ -90,7 +106,8 @@ var pause_delay := 0.0
 var see_descriptions: bool = false:
 	set(x):
 		see_descriptions = x
-		%ItemDescriptions.visible = x
+		if item_descriptions:
+			item_descriptions.visible = x
 var see_anomalies := 0
 var random_cog_heals := 0
 var custom_gag_order := 0
@@ -117,8 +134,9 @@ var use_accuracy := 0
 var cogs_always_hit := 0
 var stranger_guaranteed := false
 var obscured_laff: bool:
-	get: return laff_meter.obscured
-	set(x): laff_meter.obscured = x
+	get: return laff_meter.obscured if laff_meter else false
+	set(x):
+		if laff_meter: laff_meter.obscured = x
 var alt_gag_hotswap := false
 
 var laff_lock_enabled := false:
@@ -145,25 +163,68 @@ func _init() -> void:
 		'PAUSE_MENU': "res://objects/pause_menu/pause_menu.tscn",
 	})
 
+## _enter_tree() fires on every tree re-entry, not just the first -- including
+## every player.reparent(...) call (battles, several cog-attack/boss movies,
+## the golf cart). Godot does NOT re-run _ready()/@onready on a reparent, only
+## _enter_tree()/_exit_tree(), so without this guard each reparent would stack
+## another camera + HUD on top of the one from the original _ready().
+var _local_layer_instantiated := false
+
+func _enter_tree() -> void:
+	# Local-only layer must exist before @onready resolves it below, so it's
+	# built here rather than in _ready(). Multiplayer authority has to be
+	# assigned before a node enters the tree (see architecture.md), so this
+	# reads correctly for a remote-owned body spawned under a
+	# MultiplayerSpawner (TGM-37) as well as for the offline/single-player
+	# default, where every node is its own authority.
+	if is_multiplayer_authority() and not _local_layer_instantiated:
+		_instantiate_local_layer()
+
+func _instantiate_local_layer() -> void:
+	_local_layer_instantiated = true
+
+	var camera_node: PlayerCamera = PLAYER_CAMERA_SCENE.instantiate()
+	camera_node.process_physics_priority = -100
+	camera_node.position.y = PLAYER_CAMERA_Y_OFFSET
+	camera_node.unique_name_in_owner = true
+	add_child(camera_node)
+	camera_node.owner = self
+
+	var gui_node: Control = PLAYER_HUD_SCENE.instantiate()
+	add_child(gui_node)
+	gui_node.owner = self
+	for child in gui_node.get_children():
+		child.owner = self
+
 func _ready() -> void:
 	state = state
 	
-	# Make player globally accessible
-	Util.player = self
+	# Make player globally accessible -- only the local player should ever be
+	# "the" player (TGM-24 registry-alongside strategy). Gating on
+	# is_multiplayer_authority() keeps Util.player meaning "the local player"
+	# once remote-owned bodies exist.
+	if is_multiplayer_authority():
+		Util.player = self
 	
 	# Construct the toon from the character DNA
 	toon.construct_toon(character.dna)
 	print('toon constructed')
 	animator = toon.body.animator
-	laff_meter.set_meter(character.dna)
+	
+	# The local-only layer (camera + HUD) doesn't exist on a remote body, so
+	# camera-dependent initial-orientation setup only runs for the local
+	# player. A remote body's initial facing is a replication concern for
+	# TGM-37, not this ticket.
+	if is_multiplayer_authority():
+		laff_meter.set_meter(character.dna)
+		
+		# Correct rotation
+		camera.rotate_y(rotation.y)
+		toon.rotation.y = camera.rotation.y
+		rotation = Vector3(0, 0, 0)
 	
 	# Set to the neutral anim
 	set_animation('neutral')
-	
-	# Correct rotation
-	camera.rotate_y(rotation.y)
-	toon.rotation.y = camera.rotation.y
-	rotation = Vector3(0, 0, 0)
 	
 	# Hook up stats
 	connect_stats()
@@ -179,8 +240,8 @@ func _physics_process(_delta: float) -> void:
 
 func _process(delta: float) -> void:
 	# Hide GUI
-	if Input.is_action_just_pressed('hide_gui'):
-		%GUI.set_visible(not %GUI.visible)
+	if gui and Input.is_action_just_pressed('hide_gui'):
+		gui.set_visible(not gui.visible)
 	
 	# Pause Logic
 	if not controller.current_state.accepts_interaction():
@@ -335,23 +396,26 @@ func reset_stats() -> void:
 
 func connect_stats() -> void:
 	# Update laff meter on hp/max hp update
-	laff_meter.max_laff = stats.max_hp
-	laff_meter.laff = stats.hp
-	laff_meter.extra_lives = stats.extra_lives
-	laff_meter.lock_enabled = laff_lock_enabled
-	bean_jar.bean_count = stats.money
-	stats.hp_changed.connect(laff_meter.set_laff)
-	stats.max_hp_changed.connect(laff_meter.set_max_laff)
-	stats.s_money_changed.connect(func(x: int): bean_jar.bean_count = x)
-	stats.s_gained_money.connect(bean_jar.scale_pop)
+	if laff_meter:
+		laff_meter.max_laff = stats.max_hp
+		laff_meter.laff = stats.hp
+		laff_meter.extra_lives = stats.extra_lives
+		laff_meter.lock_enabled = laff_lock_enabled
+		stats.hp_changed.connect(laff_meter.set_laff)
+		stats.max_hp_changed.connect(laff_meter.set_max_laff)
+		stats.s_extra_lives_changed.connect(func(x: int): laff_meter.extra_lives = x)
+	if bean_jar:
+		bean_jar.bean_count = stats.money
+		stats.s_money_changed.connect(func(x: int): bean_jar.bean_count = x)
+		stats.s_gained_money.connect(bean_jar.scale_pop)
 	stats.hp_changed.connect(check_hp)
-	stats.s_extra_lives_changed.connect(func(x: int): laff_meter.extra_lives = x)
 	# Regenerate points at end of round
 	if not BattleService.s_round_ended.is_connected(stats.on_round_end):
 		BattleService.s_round_ended.connect(stats.on_round_end)
 	if not BattleService.s_battle_started.is_connected(stats.on_battle_started):
 		BattleService.s_battle_started.connect(stats.on_battle_started)
-	stats.s_active_item_changed.connect(func(newitem): active_item_ui.item = newitem)
+	if active_item_ui:
+		stats.s_active_item_changed.connect(func(newitem): active_item_ui.item = newitem)
 	stats.current_active_item = stats.current_active_item
 	if stats.current_active_item and not stats.current_active_item.node:
 		stats.current_active_item.apply_item(self)
@@ -386,6 +450,8 @@ func quick_heal(amount: int, allow_iframes := true) -> void:
 
 
 func recenter_camera(instant := true) -> void:
+	if not camera:
+		return
 	if instant:
 		camera.rotation = Vector3.ZERO
 		camera.rotation_degrees.y = toon.rotation_degrees.y + 180.0
