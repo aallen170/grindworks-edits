@@ -44,6 +44,7 @@ BattleService="*res://objects/globals/battle_service.gd"
 RNG="*res://objects/globals/rng.gd"
 HoverManager="*res://objects/globals/hover_manager.tscn"
 ScoreTally="*uid://cfat42na3w60v"
+Session="*res://objects/globals/multiplayer_session.gd"
 
 [debug]
 
