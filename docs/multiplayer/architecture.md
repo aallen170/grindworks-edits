@@ -409,6 +409,19 @@ which body actually gets local input (movement still reads `Input` unconditional
 `scenes/elevator_scene/elevator_scene.gd:32` and `scenes/game_floor/game_floor.gd:144`. Under a
 `MultiplayerSpawner` these become spawn-function calls instead.
 
+**Spawning, as built by TGM-37 (2026-09-30).** `PlayerSpawner` (`objects/player/player_spawner.gd`) is a
+`MultiplayerSpawner` under `SceneLoader.persistent_node`, so toons survive scene changes and its path is
+identical on every peer. `PlayerSpawner.ensure()` must run on **every** peer before the session starts, since a
+client without a spawner at that path cannot receive spawn packets. Only the host spawns, from `Session`: its own
+toon at `session_started` (authority 1) and one per `player_joined`. The spawn function builds the body, adds the
+`MultiplayerSynchronizer` (`Player.setup_network_sync()`: `position`, `velocity`, `Toon:rotation` every tick;
+`state` and `net_animation` on change), then calls `set_multiplayer_authority(peer_id)` before the node enters the
+tree. A remote body never runs the FSM's movement: `PlayerState3D._physics_process()` returns early unless
+`is_multiplayer_authority()`, which is the single gate for every `Input.*` read in the states. `Player._process()`
+and `_physics_process()` are gated the same way (no remote pause menu, no remote fall-out signal). The two
+instantiation sites above are **not yet** converted: they still create a locally-owned body, which on a joined
+client has the wrong authority. Gating them on `Session.is_session_active()` belongs with M1d (starting a run).
+
 **The battle authority seam is narrow and clean.** `battle_ui.gd:56 gag_selected(gag: BattleAction)`
 is where a chosen action enters the system, and `battle_manager.append_action()` is where it lands
 in `round_actions: Array[BattleAction]`. A client's action becomes one RPC to the host, which calls
@@ -452,6 +465,17 @@ of player count.
 ---
 
 ## Known hazards
+
+**Reparenting a spawned body may despawn it on other peers (unverified).** `MultiplayerSpawner` tracks a spawned
+node leaving the tree, and `Player.reparent(...)` (battles, boss movies, the golf cart) exits and re-enters it.
+Not tested in TGM-37, which had no Godot available. Check before battle sync (TGM-23) reparents a replicated toon.
+
+**Remote toons are built from the default character.** `player.gd` constructs the toon from `character.dna`, and
+nothing replicates a client's DNA yet, so every remote toon looks like the default. Identity and DNA replication
+belongs with D15.
+
+**Remote `WorldItem` contact is ignored on the local machine.** `body_entered()` and `body_reacted()` return early
+for a non-authority `Player`. Who may collect an item, and how that is synced, is TGM-23.
 
 **Runtime-created `MultiplayerSynchronizer` node paths — checked on 4.6.2, does not reproduce.**
 Godot issue [#87426](https://github.com/godotengine/godot/issues/87426) reports that a

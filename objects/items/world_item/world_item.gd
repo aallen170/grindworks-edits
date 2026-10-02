@@ -150,6 +150,11 @@ func _tween_model() -> void:
 func body_entered(body: Node3D) -> void:
 	if not body is Player:
 		return
+	# A remote toon walking over an item must not collect it on this machine.
+	# Who may collect, and how it is synced, is TGM-23; this only stops the
+	# local machine reacting to someone else's body.
+	if not body.is_multiplayer_authority():
+		return
 	var player: Player = body
 	
 	if player.state == Player.PlayerState.STOPPED:
@@ -306,6 +311,10 @@ func remove_current_item(node : Node3D):
 
 func body_reacted(body):
 	if not body is Player:
+		return
+	# Known hazard (architecture.md): a remote toon near an item must not drive
+	# the local HUD reaction via ItemService.items_in_proximity.
+	if not body.is_multiplayer_authority():
 		return
 	ItemService.item_in_proximity(self)
 

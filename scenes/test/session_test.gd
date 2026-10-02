@@ -12,14 +12,31 @@ extends Control
 ##   1. Both windows show the same "Host peer id" and the correct role.
 ##   2. Closing the client window logs "player left" on the host; the host keeps running.
 ##   3. A 5th instance joining is refused (cap of 4).
+##
+## TGM-37 (M1c) additions: the scene also has a flat test floor and a PlayerSpawner
+## (created on every instance before any session starts, which spawners require).
+## Once connected, each window should show its own toon with a camera and HUD plus
+## the other player's toon, and moving in one window should move that toon in the
+## other. Check:
+##   4. Both toons are visible in both windows, standing apart.
+##   5. WASD in one window moves only that window's toon; the other window shows
+##      the same toon moving (position, facing, walk/run/jump animation).
+##   6. Each window has exactly one camera and one HUD, and only the focused
+##      window's input moves anything.
+## Walking captures the mouse, so Host/Join first. Do not press Esc (the pause menu
+## is not loaded in this scene); close the window to leave.
 
 var _role_label := Label.new()
 var _players_label := Label.new()
 var _log := RichTextLabel.new()
 var _address := LineEdit.new()
 var _port := LineEdit.new()
+var _spawner: PlayerSpawner
 
 func _ready() -> void:
+	_build_test_floor()
+	_spawner = PlayerSpawner.ensure()
+	_spawner.player_spawned.connect(_on_player_spawned)
 	var root := VBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 16)
 	add_child(root)
@@ -62,6 +79,43 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_refresh()
+
+## Flat floor + light. Physics layer 1 is in the Player's collision mask.
+func _build_test_floor() -> void:
+	var world := Node3D.new()
+	world.name = "TestWorld"
+	add_child(world)
+	var floor_body := StaticBody3D.new()
+	floor_body.position = Vector3(4, -0.5, 0)
+	world.add_child(floor_body)
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(60, 1, 60)
+	shape.shape = box
+	floor_body.add_child(shape)
+	var mesh := MeshInstance3D.new()
+	var box_mesh := BoxMesh.new()
+	box_mesh.size = box.size
+	mesh.mesh = box_mesh
+	floor_body.add_child(mesh)
+	var light := DirectionalLight3D.new()
+	light.rotation_degrees = Vector3(-55, 30, 0)
+	world.add_child(light)
+
+func _on_player_spawned(body: Player, peer_id: int) -> void:
+	# Compare peer ids rather than body.is_multiplayer_authority(): this signal
+	# fires before the body enters the tree, and that check is always false for
+	# a node that is not in the tree yet.
+	var is_local := peer_id == Session.get_local_peer_id()
+	_say("spawned toon for peer %d (local: %s)" % [peer_id, is_local])
+	if not is_local:
+		return
+	# Local toon only: take the camera and start walking once the body is ready.
+	body.ready.connect(_start_local_body.bind(body), CONNECT_ONE_SHOT)
+
+func _start_local_body(body: Player) -> void:
+	body.camera.make_current()
+	body.state = Player.PlayerState.WALK
 
 func _port_value() -> int:
 	return _port.text.to_int() if _port.text.is_valid_int() else Session.DEFAULT_PORT
