@@ -24,6 +24,12 @@ enum PlayerState {
 @export var state := PlayerState.STOPPED:
 	set(x):
 		await NodeGlobals.until_ready(self)
+		# On a remote body, Push has nothing to push: PushState._enter() needs a
+		# local PushableComponent that only the owning peer assigned. Record the
+		# value and let the replicated animation show the pose.
+		if x == PlayerState.PUSH and not is_multiplayer_authority():
+			state = x
+			return
 		var state_name: StringName = PlayerStateToName[x]
 		if state_name != controller.current_state_name:
 			controller.request(state_name)
@@ -158,6 +164,43 @@ signal s_jumped
 signal s_stats_connected(stats: PlayerStats)
 signal s_hurt_realtime(damage: int)
 
+#region Network replication (TGM-37)
+
+const NET_SYNC_NAME := &"NetSync"
+
+## Replicated mirror of the current toon animation. The owning peer's value is
+## read from the animator; remote peers play whatever arrives. Empty strings
+## (a one-shot animation that finished) are ignored.
+var net_animation: String:
+	get:
+		return animator.current_animation if animator else ""
+	set(x):
+		if is_multiplayer_authority() or x.is_empty() or not animator:
+			return
+		set_animation(x)
+
+## Adds the MultiplayerSynchronizer that replicates this body from its owner.
+## Call before set_multiplayer_authority() and before the node enters the tree
+## (done by PlayerSpawner). Decision on TGM-26: a synchronizer, not @rpc.
+func setup_network_sync() -> void:
+	if has_node(NodePath(NET_SYNC_NAME)):
+		return
+	var config := SceneReplicationConfig.new()
+	# Continuous motion: sent every sync tick, unreliable.
+	for path in [^".:position", ^".:velocity", ^"Toon:rotation"]:
+		config.add_property(path)
+		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+	# Discrete values: only sent when they change.
+	for path in [^".:state", ^".:net_animation"]:
+		config.add_property(path)
+		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
+	var sync := MultiplayerSynchronizer.new()
+	sync.name = NET_SYNC_NAME
+	sync.replication_config = config
+	add_child(sync)
+
+#endregion
+
 func _init() -> void:
 	GameLoader.queue_into(GameLoader.Phase.GAMEPLAY, self, {
 		'PAUSE_MENU': "res://objects/pause_menu/pause_menu.tscn",
@@ -230,6 +273,9 @@ func _ready() -> void:
 	connect_stats()
 
 func _physics_process(_delta: float) -> void:
+	# Fall-out-of-world and the laff lock hotkey are the owning peer's business.
+	if not is_multiplayer_authority():
+		return
 	# Emit signal when player is under death threshold
 	if global_position.y < DEATH_THRESHOLD:
 		s_fell_out_of_world.emit(self)
@@ -239,6 +285,9 @@ func _physics_process(_delta: float) -> void:
 		laff_lock = not laff_lock
 
 func _process(delta: float) -> void:
+	# A remote body must not open the local pause menu or toggle the local HUD.
+	if not is_multiplayer_authority():
+		return
 	# Hide GUI
 	if gui and Input.is_action_just_pressed('hide_gui'):
 		gui.set_visible(not gui.visible)

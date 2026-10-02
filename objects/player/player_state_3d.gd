@@ -23,6 +23,13 @@ var stats: PlayerStats:
 	get: return player.stats
 
 func _physics_process(delta: float) -> void:
+	# A remote-owned body never reads local Input or simulates movement: its
+	# position, velocity and animation arrive through the body's
+	# MultiplayerSynchronizer (TGM-37). Every Input.* read in the states goes
+	# through handle_movement(), so this one gate covers all of them. Offline,
+	# every body is its own authority, so single-player is unchanged.
+	if not player.is_multiplayer_authority():
+		return
 	_jumped_this_frame = false
 	handle_movement(delta)
 	handle_sfx()
