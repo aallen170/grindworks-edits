@@ -42,6 +42,17 @@ var interactive_music_player: Node
 ## Simplified method of storing custom values on the floor
 var floor_tags: Dictionary[String, Variant] = {}
 
+## Pre-rolled room plan (TGM-36, D17). Parallel arrays: scene path and RoomType per room, in
+## floor order. The host (and single-player) rolls the whole plan up front in
+## [method roll_room_plan]; a client receives it from the host and never draws from RNG for layout.
+var room_plan_paths := PackedStringArray()
+var room_plan_types := PackedInt32Array()
+## Set on a client before _ready() by [method create_replica]: the layout the host sent.
+## Empty on the host and in single-player.
+var replicated_layout: Dictionary = {}
+## Background track picked for this floor (path), so a client plays the host's choice.
+var music_path := ""
+
 
 class StoredRoom:
 	var room: Node3D
@@ -68,17 +79,75 @@ func _ready() -> void:
 	floor_variant.load_all()
 	unloaded_rooms = Node3D.new()
 	Util.floor_manager = self
-	# Room count must be an odd number
-	if room_count % 2 == 0:
-		room_count += 1
-	Util.floor_number += 1
-	generate_floor()
+	if is_replica():
+		# The host already settled the count and the floor number.
+		Util.floor_number = replicated_layout["floor_number"]
+	else:
+		# Room count must be an odd number
+		if room_count % 2 == 0:
+			room_count += 1
+		Util.floor_number += 1
+	if Session.is_session_active() and not is_instance_valid(Util.get_player()):
+		# During a session toons come from the PlayerSpawner, and this peer's body may not have
+		# arrived yet (a late joiner). Wait for it rather than spawning a second, wrongly-owned toon.
+		Util.s_player_assigned.connect(func(_player: Player) -> void: generate_floor(), CONNECT_ONE_SHOT)
+	else:
+		generate_floor()
 	if SaveFileService.run_file:
 		SaveFileService.run_file.floor_choice = null
 	if floor_variant.dynamic_music:
 		interactive_music_player = load(INTERACTIVE_STREAM_PLAYER).instantiate()
 		interactive_music_player.interactive_stream = floor_variant.dynamic_music
 		add_child(interactive_music_player)
+
+## True on a client building the host's floor. Everything random was already decided by the host.
+func is_replica() -> bool:
+	return not replicated_layout.is_empty()
+
+## Builds a GameFloor from the layout a host sent (see [method build_layout_payload]).
+## A stand-in FloorVariant carries only what the floor reads while building: the host's floor
+## variant lost its resource identity when it was duplicated and randomized, and anomalies,
+## modifiers and rewards are not part of the M1 payload.
+static func create_replica(layout: Dictionary) -> GameFloor:
+	var new_floor: GameFloor = load("res://scenes/game_floor/game_floor.tscn").instantiate()
+	var variant := FloorVariant.new()
+	variant.floor_name = layout["floor_name"]
+	variant.floor_type = DepartmentFloor.new()
+	variant.floor_type.battle_music = layout["battle_music"]
+	new_floor.floor_variant = variant
+	new_floor.room_count = layout["room_count"]
+	new_floor.level_range = layout["level_range"]
+	new_floor.room_plan_paths = layout["room_paths"]
+	new_floor.room_plan_types = layout["room_types"]
+	new_floor.music_path = layout["music"]
+	new_floor.replicated_layout = layout
+	return new_floor
+
+## What a client needs to rebuild this floor's layout. Plain Variants only (it travels over RPC).
+func build_layout_payload() -> Dictionary:
+	return {
+		"floor_number": Util.floor_number,
+		"floor_name": floor_variant.floor_name,
+		"room_count": room_count,
+		"level_range": level_range,
+		"room_paths": room_plan_paths,
+		"room_types": room_plan_types,
+		"music": music_path,
+		"battle_music": floor_rooms.battle_music,
+	}
+
+## Order-sensitive hash of the rooms built so far: scene, type and placement. Two peers that built
+## the same rooms print the same value. Pass [param max_rooms] to hash only the first N rooms, so
+## peers that have walked different distances can still be compared.
+func get_layout_fingerprint(max_rooms := -1) -> String:
+	var parts: Array = []
+	for i in room_order.size():
+		if max_rooms >= 0 and i >= max_rooms:
+			break
+		var stored := room_order[i]
+		var room_pos: Vector3 = stored.room_transform.origin
+		parts.append([stored.room.scene_file_path, stored.room_type, snappedf(room_pos.x, 0.01), snappedf(room_pos.y, 0.01), snappedf(room_pos.z, 0.01)])
+	return "%08x" % (hash(parts) & 0xffffffff)
 
 func generate_floor() -> void:
 	if debug_floor_variant:
@@ -115,29 +184,13 @@ func generate_floor() -> void:
 	# Get the floor room values
 	floor_rooms = floor_variant.floor_type
 	Util.floor_type = floor_rooms
-	# Randomly decide 40% - 60% battle rooms 
-	battle_ratio = 0.4 + (0.1 * float(RNG.channel(RNG.ChannelBattleRatio).randi() % 3))
-	var total_rooms = int((room_count - 2) / 2)
-	var total_battles := int(total_rooms * battle_ratio)
-	rooms_remaining = [total_battles, total_rooms - total_battles]
-
-	if floor_rooms.special_rooms and RNG.channel(RNG.ChannelRoomLogic).randf() < get_special_room_chance():
-		# 50% chance to add a "special room" to the pool
-		var sr_idx := RNG.channel(RNG.ChannelRoomLogic).randi_range(1, floor_rooms.special_rooms.size()) - 1
-		print('Adding special room: %s' % floor_rooms.special_rooms[sr_idx].room)
-		floor_rooms.one_time_rooms.append(floor_rooms.special_rooms[sr_idx].room)
-
-	# Add 2 rooms to the floor per 1 time room
-	# And get a room index to slap that room into
-	for i in floor_rooms.one_time_rooms.size():
-		room_count += 2
-		var rand_room := -1
-		while rand_room * 2 in one_time_room_indexes or rand_room == -1:
-			rand_room = RNG.channel(RNG.ChannelRoomLogic).randi() % (room_count - 1) / 2
-			# Ensure 0 cannot be rolled
-			rand_room = maxi(rand_room,1)
-		one_time_room_indexes.append(rand_room * 2)
-	
+	if not is_replica():
+		roll_floor_layout()
+		music_path = ""
+		if not floor_rooms.background_music.is_empty():
+			music_path = floor_rooms.background_music[randi() % floor_rooms.background_music.size()]
+		if Session.is_session_active() and Session.is_host():
+			FloorReplicator.ensure().publish(build_layout_payload())
 	
 	var player := Util.get_player()
 	if not player:
@@ -172,19 +225,27 @@ func generate_floor() -> void:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	
 	# Set the proper default bg music
-	if not floor_rooms.background_music.is_empty():
-		AudioManager.set_default_music(load(floor_rooms.background_music[randi() % floor_rooms.background_music.size()]))
+	if not music_path.is_empty():
+		AudioManager.set_default_music(load(music_path))
 
 func spawn_player(player: Player) -> void:
 	var entrance = room_node.get_child(0)
-	player.global_position = entrance.get_node('SPAWNPOINT').global_position
+	var spawn_point: Node3D = entrance.get_node('SPAWNPOINT')
+	player.global_position = spawn_point.global_position
+	# Each peer places only its own body (position syncs from the owner); spread them along the
+	# spawn point so toons do not stack inside each other.
+	var spawn_index := maxi(Session.get_player_peer_ids().find(Session.get_local_peer_id()), 0)
+	player.global_position += spawn_point.global_transform.basis.x * (spawn_index * PlayerSpawner.SPAWN_SPACING)
 	player.state = Player.PlayerState.WALK
 	player.camera.make_current()
 	player.face_position(entrance.get_node('EXIT').global_position)
 	player.recenter_camera(true)
 
 func get_random_connector_room() -> PackedScene:
-	return load(RNG.channel(&'connector_rooms').pick_random(floor_rooms.connectors))
+	return load(get_random_connector_room_path())
+
+func get_random_connector_room_path() -> String:
+	return RNG.channel(&'connector_rooms').pick_random(floor_rooms.connectors)
 
 func inject_room_pack(dept_floor: DepartmentFloor, room_pack: RoomPack) -> void:
 	var room_types: Dictionary[String, String] = {
@@ -204,40 +265,85 @@ func inject_room_pack(dept_floor: DepartmentFloor, room_pack: RoomPack) -> void:
 			rooms.append_array(room_pack.get(room_type))
 			dept_floor.set(room_type, rooms)
 
-func add_random_room():
-	var index := room_order.size()
-	var new_room: PackedScene
-	var room_type := RoomType.CONNECTOR
-	if index == 0:
-		new_room = load(floor_rooms.entrances[RNG.channel(RNG.ChannelRoomLogic).randi() % floor_rooms.entrances.size()])
-		room_type = RoomType.ENTRANCE
-	elif index in one_time_room_indexes:
-		new_room = load(floor_rooms.one_time_rooms[one_time_room_indexes.find(index)])
-		room_type = RoomType.ONE_TIME
-	elif index < room_count - 1:
-		if index % 2 == 0:
-			# Roll a random room type based on the remaining rooms
-			var room_roll := RNG.channel(RNG.ChannelRemainingRooms).randi() % (rooms_remaining[0] + rooms_remaining[1])
-			if room_roll < rooms_remaining[0]:
-				new_room = roll_for_room(floor_rooms.battle_rooms, 'battle_rooms')
-				rooms_remaining[0] -= 1
-				room_type = RoomType.BATTLE
+## Rolls everything about the floor's shape that is random (host and single-player only).
+func roll_floor_layout() -> void:
+	# Randomly decide 40% - 60% battle rooms
+	battle_ratio = 0.4 + (0.1 * float(RNG.channel(RNG.ChannelBattleRatio).randi() % 3))
+	var total_rooms = int((room_count - 2) / 2)
+	var total_battles := int(total_rooms * battle_ratio)
+	rooms_remaining = [total_battles, total_rooms - total_battles]
+
+	if floor_rooms.special_rooms and RNG.channel(RNG.ChannelRoomLogic).randf() < get_special_room_chance():
+		# 50% chance to add a "special room" to the pool
+		var sr_idx := RNG.channel(RNG.ChannelRoomLogic).randi_range(1, floor_rooms.special_rooms.size()) - 1
+		print('Adding special room: %s' % floor_rooms.special_rooms[sr_idx].room)
+		floor_rooms.one_time_rooms.append(floor_rooms.special_rooms[sr_idx].room)
+
+	# Add 2 rooms to the floor per 1 time room
+	# And get a room index to slap that room into
+	for i in floor_rooms.one_time_rooms.size():
+		room_count += 2
+		var rand_room := -1
+		while rand_room * 2 in one_time_room_indexes or rand_room == -1:
+			rand_room = RNG.channel(RNG.ChannelRoomLogic).randi() % (room_count - 1) / 2
+			# Ensure 0 cannot be rolled
+			rand_room = maxi(rand_room,1)
+		one_time_room_indexes.append(rand_room * 2)
+
+	roll_room_plan()
+
+## Rolls every room of the floor up front, in the same order the old lazy generation drew them, so
+## each RNG channel sees the same sequence as before. The plan is what gets replicated (D17).
+func roll_room_plan() -> void:
+	room_plan_paths.clear()
+	room_plan_types.clear()
+	while true:
+		var index := room_plan_paths.size()
+		if index == 0:
+			var entrance: String = floor_rooms.entrances[RNG.channel(RNG.ChannelRoomLogic).randi() % floor_rooms.entrances.size()]
+			plan_room(entrance, RoomType.ENTRANCE)
+		elif index in one_time_room_indexes:
+			plan_room(floor_rooms.one_time_rooms[one_time_room_indexes.find(index)], RoomType.ONE_TIME)
+		elif index < room_count - 1:
+			if index % 2 == 0:
+				# Roll a random room type based on the remaining rooms
+				var room_roll := RNG.channel(RNG.ChannelRemainingRooms).randi() % (rooms_remaining[0] + rooms_remaining[1])
+				if room_roll < rooms_remaining[0]:
+					plan_room(roll_for_room_path(floor_rooms.battle_rooms, 'battle_rooms'), RoomType.BATTLE)
+					rooms_remaining[0] -= 1
+				else:
+					plan_room(roll_for_room_path(floor_rooms.obstacle_rooms, 'obstacle_rooms'), RoomType.OBSTACLE)
+					rooms_remaining[1] -= 1
 			else:
-				new_room = roll_for_room(floor_rooms.obstacle_rooms, 'obstacle_rooms')
-				rooms_remaining[1] -= 1
-				room_type = RoomType.OBSTACLE
+				plan_room(get_random_connector_room_path(), RoomType.CONNECTOR)
 		else:
-			new_room = get_random_connector_room()
-			room_type = RoomType.CONNECTOR
-	else:
-		if floor_rooms.pre_final_rooms:
-			var pre_final_room: PackedScene = roll_for_room(floor_rooms.pre_final_rooms, 'pre_final_rooms')
-			append_room(pre_final_room, RoomType.PRE_FINAL)
-			append_room(get_random_connector_room(), RoomType.CONNECTOR)
-		new_room = roll_for_room(floor_rooms.final_rooms, 'boss_rooms')
-		room_type = RoomType.BOSS
-		render_rooms += 1
-	append_room(new_room, room_type)
+			if floor_rooms.pre_final_rooms:
+				plan_room(roll_for_room_path(floor_rooms.pre_final_rooms, 'pre_final_rooms'), RoomType.PRE_FINAL)
+				plan_room(get_random_connector_room_path(), RoomType.CONNECTOR)
+			plan_room(roll_for_room_path(floor_rooms.final_rooms, 'boss_rooms'), RoomType.BOSS)
+			return
+
+func plan_room(path: String, room_type: RoomType) -> void:
+	room_plan_paths.append(path)
+	room_plan_types.append(room_type)
+
+## Builds the next room from the plan. The pre-final room, its connector and the boss room go in
+## together, as they always have.
+func add_random_room() -> void:
+	var index := room_order.size()
+	if index >= room_plan_paths.size():
+		return
+	append_planned_room(index)
+	match room_plan_types[index]:
+		RoomType.PRE_FINAL:
+			append_planned_room(index + 1)
+			append_planned_room(index + 2)
+			render_rooms += 1
+		RoomType.BOSS:
+			render_rooms += 1
+
+func append_planned_room(index: int) -> void:
+	append_room(load(room_plan_paths[index]), room_plan_types[index] as RoomType)
 
 func append_room(room: PackedScene, room_type: RoomType):
 	var new_module: Node3D = room.instantiate()
@@ -296,6 +402,9 @@ func body_entered_room(body, index: int):
 		adjust_view(room_index)
 
 func roll_for_room(rooms: Array[FacilityRoom], seed_channel := RNG.ChannelTrueRandom) -> PackedScene:
+	return load(roll_for_room_path(rooms, seed_channel))
+
+func roll_for_room_path(rooms: Array[FacilityRoom], seed_channel := RNG.ChannelTrueRandom) -> String:
 	rooms = rooms.duplicate(true)
 	for room in previous_rooms:
 		if room in rooms:
@@ -309,7 +418,7 @@ func roll_for_room(rooms: Array[FacilityRoom], seed_channel := RNG.ChannelTrueRa
 	if previous_rooms.size() >= ROOM_REPEAT_DETECTION_SIZE:
 		previous_rooms.pop_front()
 	previous_rooms.append(rooms[room_idx])
-	return load(rooms[room_idx].room)
+	return rooms[room_idx].room
 
 func adjust_view(index: int = 0):
 	if room_order.is_empty():

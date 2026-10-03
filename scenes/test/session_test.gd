@@ -25,6 +25,15 @@ extends Control
 ##      window's input moves anything.
 ## Walking captures the mouse, so Host/Join first. Do not press Esc (the pause menu
 ## is not loaded in this scene); close the window to leave.
+##
+## TGM-36 (M1d) additions: once connected, the host picks a floor and presses "Start floor".
+## The host rolls the whole layout and sends it; every client builds the same floor (this scene
+## is replaced by the floor on each instance). A status label in the top-left shows the layout
+## fingerprint. Check:
+##   7. Host and client show the same fingerprint and the same "rooms built" count.
+##   8. Join AFTER the host started the floor: the late client still gets the floor.
+##   9. Close the host window: the client returns to this scene (the floor is taken down).
+## Anomalies and floor modifiers are not replicated yet, so the floors here skip rolling anomalies.
 
 var _role_label := Label.new()
 var _players_label := Label.new()
@@ -32,11 +41,23 @@ var _log := RichTextLabel.new()
 var _address := LineEdit.new()
 var _port := LineEdit.new()
 var _spawner: PlayerSpawner
+var _replicator: FloorReplicator
+var _variant_picker := OptionButton.new()
+
+const FLOOR_VARIANTS: Dictionary[String, String] = {
+	"The Factory": "res://scenes/game_floor/floor_variants/base_floors/the_factory.tres",
+	"Mint": "res://scenes/game_floor/floor_variants/base_floors/mint.tres",
+	"DA Office": "res://scenes/game_floor/floor_variants/base_floors/da_office.tres",
+	"Cog Golf Course": "res://scenes/game_floor/floor_variants/base_floors/cog_golf_course.tres",
+}
 
 func _ready() -> void:
 	_build_test_floor()
 	_spawner = PlayerSpawner.ensure()
 	_spawner.player_spawned.connect(_on_player_spawned)
+	# Like the spawner, this has to exist on every peer before the session starts.
+	_replicator = FloorReplicator.ensure()
+	_replicator.debug_overlay = true
 	var root := VBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 16)
 	add_child(root)
@@ -62,6 +83,16 @@ func _ready() -> void:
 	leave_btn.text = "Leave"
 	leave_btn.pressed.connect(func() -> void: Session.leave_session())
 	row.add_child(leave_btn)
+
+	var floor_row := HBoxContainer.new()
+	root.add_child(floor_row)
+	for floor_name in FLOOR_VARIANTS:
+		_variant_picker.add_item(floor_name)
+	floor_row.add_child(_variant_picker)
+	var start_floor_btn := Button.new()
+	start_floor_btn.text = "Start floor (host)"
+	start_floor_btn.pressed.connect(_on_start_floor_pressed)
+	floor_row.add_child(start_floor_btn)
 
 	root.add_child(_role_label)
 	root.add_child(_players_label)
@@ -116,6 +147,19 @@ func _on_player_spawned(body: Player, peer_id: int) -> void:
 func _start_local_body(body: Player) -> void:
 	body.camera.make_current()
 	body.state = Player.PlayerState.WALK
+
+func _on_start_floor_pressed() -> void:
+	if not Session.is_host():
+		_say("only the host can start a floor")
+		return
+	var variant_path: String = FLOOR_VARIANTS.values()[_variant_picker.selected]
+	var variant: FloorVariant = (load(variant_path) as FloorVariant).duplicate(true)
+	# No anomalies: they are not replicated yet (TGM-36 scope).
+	variant.randomize_details(false)
+	# The test rig can be reused after a floor ends; start from the ground floor each time.
+	Util.floor_number = -1
+	_say("starting floor: %s" % variant.floor_name)
+	_replicator.start_floor(variant)
 
 func _port_value() -> int:
 	return _port.text.to_int() if _port.text.is_valid_int() else Session.DEFAULT_PORT
