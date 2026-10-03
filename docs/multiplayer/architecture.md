@@ -422,6 +422,30 @@ and `_physics_process()` are gated the same way (no remote pause menu, no remote
 instantiation sites above are **not yet** converted: they still create a locally-owned body, which on a joined
 client has the wrong authority. Gating them on `Session.is_session_active()` belongs with M1d (starting a run).
 
+**Floor replication, as built by TGM-36 (2026-10-02).** `GameFloor` no longer generates rooms lazily: the host (and
+single-player) rolls the whole room plan up front in `roll_room_plan()`, in the same order the old
+`add_random_room()` drew, so every layout channel sees the same sequence as before. `add_random_room()` now only
+builds the next room from the plan. `FloorReplicator` (`objects/globals/floor_replicator.gd`, under
+`SceneLoader.persistent_node`, `ensure()` on every peer like `PlayerSpawner`) sends the plan once with a reliable
+`@rpc("authority", "call_remote", "reliable")`, keeps it so `Session.player_joined` can send it to a late joiner, and
+drops it on `Util.s_floor_ended`. A client holds a payload that arrives before `session_started(false)` and builds the
+floor once it is `JOINED`. The payload is `floor_number`, `floor_name`, `room_count`, `level_range`, `room_paths`,
+`room_types`, `music`, `battle_music` (no `FloorVariant` path: the elevator duplicates and randomizes variants, so they
+have no resource identity). A client builds a `GameFloor` through `GameFloor.create_replica()` with a stand-in
+`FloorVariant`. During a session `GameFloor` waits for the local body from `PlayerSpawner` instead of instantiating its
+own (this closes the second half of the instantiation-site note above for `game_floor.gd`; `elevator_scene.gd` is
+still open and belongs with TGM-40). The host starts a floor with `FloorReplicator.start_floor()`, which also records the
+scene to return to. If the session ends mid-floor, on either role, the floor is freed and the peer returns to that
+scene; handing a hosted floor back to single-player is not built.
+
+Not replicated in M1: anomalies and floor modifiers (several draw RNG, e.g. `floor_mod_reorganization.gd`), the floor
+reward, cog pool, dynamic music, and anything a room scene rolls for itself when instantiated. The last one is a real
+gap for interiors: `cgc_maze_room.gd`/`maze_generator.gd`, the mint conveyor rooms and several molten rooms call
+`RNG.channel()` in their own scripts, so a client instantiating those rooms generates its own interior. Layout (which
+rooms, where) is identical; those interiors are not, and that breaks D17's "clients never draw" until it is handled.
+`GameFloor.body_entered_room()` still reacts to any `Player`, including a remote one, so room streaming with two toons in
+different rooms is TGM-41's problem; TGM-36 did not touch it.
+
 **The battle authority seam is narrow and clean.** `battle_ui.gd:56 gag_selected(gag: BattleAction)`
 is where a chosen action enters the system, and `battle_manager.append_action()` is where it lands
 in `round_actions: Array[BattleAction]`. A client's action becomes one RPC to the host, which calls
@@ -466,9 +490,9 @@ of player count.
 
 ## Known hazards
 
-**Reparenting a spawned body may despawn it on other peers (unverified).** `MultiplayerSpawner` tracks a spawned
+**Reparenting a spawned body breaks its replication on other peers (confirmed, TGM-36 playtest 2026-10-02).** `MultiplayerSpawner` tracks a spawned
 node leaving the tree, and `Player.reparent(...)` (battles, boss movies, the golf cart) exits and re-enters it.
-Not tested in TGM-37, which had no Godot available. Check before battle sync (TGM-23) reparents a replicated toon.
+Not tested in TGM-37, which had no Godot available. Check before battle sync (TGM-23) reparents a replicated toon. Observed with two instances on a floor: entering a cog battle moves the toon under `BattleNodeDynamic`, and the other peer logs `get_node: Node not found: ".../BattleNodeDynamic/Player_<id>/NetSync"` (`scene_cache_interface.cpp:116`, `process_simplify_path()`), after which that toon disappears on the peer. The same error appears again on the path `SceneLoader/Persistent/Player_<id>/NetSync` when the body is reparented back. Battle state is not replicated, so each client also ran its own battle and the two ended desynced. Fix direction for battle sync (TGM-23): do not reparent a replicated body, or move the body on every peer in the same step.
 
 **Remote toons are built from the default character.** `player.gd` constructs the toon from `character.dna`, and
 nothing replicates a client's DNA yet, so every remote toon looks like the default. Identity and DNA replication
