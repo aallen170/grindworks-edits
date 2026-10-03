@@ -179,6 +179,13 @@ var net_animation: String:
 			return
 		set_animation(x)
 
+## Index into [member GameFloor.room_order] of the room this toon is in (TGM-41, M1e).
+## The owning peer writes it as the toon crosses room boundaries (see
+## [method GameFloor.body_entered_room]); it replicates to every peer so each
+## [GameFloor] can keep the rooms around ALL toons loaded, not just the local one.
+## Remote peers never write it. Reset to 0 by [method GameFloor.spawn_player] on a new floor.
+var current_room_index := 0
+
 ## Adds the MultiplayerSynchronizer that replicates this body from its owner.
 ## Call before set_multiplayer_authority() and before the node enters the tree
 ## (done by PlayerSpawner). Decision on TGM-26: a synchronizer, not @rpc.
@@ -191,7 +198,7 @@ func setup_network_sync() -> void:
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
 	# Discrete values: only sent when they change.
-	for path in [^".:state", ^".:net_animation"]:
+	for path in [^".:state", ^".:net_animation", ^".:current_room_index"]:
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
 	var sync := MultiplayerSynchronizer.new()

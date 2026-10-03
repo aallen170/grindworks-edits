@@ -375,6 +375,51 @@ from. Instance-rolled item stats (e.g. `bee_hive_hairdo.gd`'s `roll_for_stats()`
 placeholder floats rather than traced per item type; this could undercount the `items` bucket somewhat
 but not by an amount that changes the conclusion at these totals.
 
+---
+
+### D18 — Room streaming follows every toon; each toon replicates its own room index
+*TGM-41, 2026-10-03 — v1, revisitable*
+
+Proposed by Claude, confirmed by Andrew (replicate the index on the body; fold the TGM-14 hardening into this ticket).
+
+`GameFloor.room_index` stays what it always was: the **local** toon's room. Everything that asks for "the current room"
+(`get_current_room()`, items, music, `player_out_of_bounds()`) means the local player and is unchanged. Streaming no longer
+derives from it alone:
+
+- `Player.current_room_index` is a replicated property (`ON_CHANGE`, on the body's existing `MultiplayerSynchronizer`).
+  Only the owner writes it, from `GameFloor.body_entered_room()`, and only for a body it is the authority of. A remote
+  body's `RoomArea` overlap is ignored for streaming.
+- Why not trust the `RoomArea` signal for remote bodies: a remote toon in a room this peer has not built, or has
+  unloaded, fires no signal, so that room would never load and the toon would float in the void.
+- `GameFloor.get_stream_anchors()` returns the local `room_index` plus every other toon's replicated index (clamped to the
+  floor). `_refresh_streaming()` keeps a room loaded if **any** anchor's window covers it, so no room unloads out from
+  under a toon, and builds forward until the **furthest** anchor has a full window. The window per anchor is the one
+  single-player always used.
+- Remote room changes arrive over the network with no signal on the receiving peer, so `_physics_process()` compares the
+  anchors to the last applied set while a session is active and queues a refresh on change.
+- `adjust_view()` now only sets a flag; `_physics_process()` runs one coalesced refresh at the start of the next physics frame.
+  `body_entered_room()` runs inside a physics callback and the refresh reparents rooms that contain the signalling
+  `RoomArea`s; one pass per frame also covers two toons entering in the same frame. It runs in a physics frame rather than via
+  `call_deferred()` because rooms hold interpolated cameras, and moving them from an idle frame logs
+  "[Physics interpolation] Interpolated Camera3D triggered from outside physics process". This is the TGM-14 hardening: the build step is also now a target (build until the furthest anchor is covered)
+  rather than one room per loop step.
+- A disconnected toon's body is kept alive (D5), so its room index stays an anchor and its room stays loaded.
+- Loading rooms around a remote toon makes that room's triggers live on this peer, so the remote body can fire them (see
+  "Room triggers react to a remote body" under Known hazards). `BattleNode.body_entered()` now requires
+  `is_multiplayer_authority()`; every other trigger is TGM-43.
+- Toon bodies live under `SceneLoader.persistent_node`, not under a room, so streaming never reparents a replicated body
+  (the `MultiplayerSpawner` reparent hazard under Known hazards does not apply here).
+
+**Consequences for other tickets.** TGM-40 (elevator transition): a toon's `current_room_index` is reset to 0 by
+`GameFloor.spawn_player()` on the new floor; a peer that has not yet received that reset still holds the previous floor's
+value, which `get_stream_anchors()` clamps to the new floor but which can make a peer build more rooms than needed until the
+update arrives. TGM-40 should reset it before the floor swap is visible. Room-interior RNG (see Codebase findings) is untouched.
+
+**What wasn't verified:** syntax-checked with `gdparse` only; none of this has run in Godot. The TGM-14 root cause was not
+reproduced, so the deferral and build-target change are hardening against the suspected mechanism, not a confirmed fix.
+
+---
+
 ## Codebase findings that shape the design
 
 Measured against repo version `1.2.7`, Godot `4.6`, on 2026-09-17.
@@ -443,8 +488,8 @@ reward, cog pool, dynamic music, and anything a room scene rolls for itself when
 gap for interiors: `cgc_maze_room.gd`/`maze_generator.gd`, the mint conveyor rooms and several molten rooms call
 `RNG.channel()` in their own scripts, so a client instantiating those rooms generates its own interior. Layout (which
 rooms, where) is identical; those interiors are not, and that breaks D17's "clients never draw" until it is handled.
-`GameFloor.body_entered_room()` still reacts to any `Player`, including a remote one, so room streaming with two toons in
-different rooms is TGM-41's problem; TGM-36 did not touch it.
+`GameFloor.body_entered_room()` reacted to any `Player`, including a remote one; room streaming with two toons in
+different rooms was left to TGM-41 and is settled in D18.
 
 **The battle authority seam is narrow and clean.** `battle_ui.gd:56 gag_selected(gag: BattleAction)`
 is where a chosen action enters the system, and `battle_manager.append_action()` is where it lands
@@ -490,9 +535,23 @@ of player count.
 
 ## Known hazards
 
+**Room triggers react to a remote body (found TGM-41 playtest 2026-10-03; battle nodes guarded in TGM-41, the rest is TGM-43).** Nothing in the world is
+replicated yet, and room triggers check only `body is Player`, so the replicated body of another player fires them on every peer
+that has the room loaded. TGM-41 loads the rooms around every toon, which makes this easy to hit with toons in different rooms.
+Confirmed on a Factory floor with two instances: the host walked through room 8's battle trigger and `BattleNode.body_entered()` on
+the client accepted the host's remote body (`own_toon=false`), ran `player_entered()` on it and reparented it, with the client
+logging `on_delta_receive` / `on_despawn_receive` errors. `ignore_battles` is a local `Player` property and is not replicated, so the
+remote copy always has it false and setting it on both windows does not help. In a second run the client's attempt stopped at the
+`accepts_interaction()` check (the remote copy's controller was not in a Walk/Chase/Push state although the host was only walking),
+and `BattleNode` re-armed `monitoring` on the bail-out, so it re-fired `body_entered()` every physics frame for as long as the host
+overlapped (100+ log lines). `Goon.body_entered()` / `body_detected()` have the same pattern: each peer simulates its own goon, so a
+stomp by either toon disables it on both peers while search-light damage depends on each peer's goon position. Fix: only the peer that
+owns the body may start a local reaction (`body.is_multiplayer_authority()`), or the host decides and replicates the result; audit in TGM-43.
+
 **Reparenting a spawned body breaks its replication on other peers (confirmed, TGM-36 playtest 2026-10-02).** `MultiplayerSpawner` tracks a spawned
 node leaving the tree, and `Player.reparent(...)` (battles, boss movies, the golf cart) exits and re-enters it.
 Not tested in TGM-37, which had no Godot available. Check before battle sync (TGM-23) reparents a replicated toon. Observed with two instances on a floor: entering a cog battle moves the toon under `BattleNodeDynamic`, and the other peer logs `get_node: Node not found: ".../BattleNodeDynamic/Player_<id>/NetSync"` (`scene_cache_interface.cpp:116`, `process_simplify_path()`), after which that toon disappears on the peer. The same error appears again on the path `SceneLoader/Persistent/Player_<id>/NetSync` when the body is reparented back. Battle state is not replicated, so each client also ran its own battle and the two ended desynced. Fix direction for battle sync (TGM-23): do not reparent a replicated body, or move the body on every peer in the same step.
+Consequence seen in TGM-41 testing: once a peer's body is despawned this way, the other peers' `PlayerSpawner._bodies` entry for it points at a freed instance, and `PlayerSpawner.get_body()` must not assign that to a typed variable (it errors, every physics frame once streaming polls it). Fixed in TGM-41 by reading it untyped before `is_instance_valid()`. The toon still vanishes on the other peers until battle sync exists.
 
 **Remote toons are built from the default character.** `player.gd` constructs the toon from `character.dna`, and
 nothing replicates a client's DNA yet, so every remote toon looks like the default. Identity and DNA replication
@@ -578,7 +637,8 @@ records its owner.
   near-term target; 4 is the design ceiling. Nothing in D2 or D3 is sensitive at this scale.
 - **TGM-14 interaction.** Room streaming already breaks when skipping past chunk boundaries. Two
   players in different rooms is a routine version of that condition, so it will likely resurface
-  during M1. Fixing it first may be cheaper than debugging it through a network layer.
+  during M1. Folded into TGM-41 (see D18); the root cause is still unconfirmed, so TGM-14 closes only
+  after a noclip skip-ahead playtest.
 - **Cog scaling by player count** (TGM-23). Whether cog HP and lure stacks scale with the number of
   players, and whether a disconnected toon counts. Player power scaling is settled: it comes only from
   chests (D16). A disconnected toon stays a valid target (D5), so counting it is the natural default.

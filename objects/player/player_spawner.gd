@@ -32,6 +32,10 @@ const SPAWN_SPACING := 2.0
 ## elsewhere, so read through [method get_body].
 var _bodies: Dictionary[int, Player] = {}
 
+## Returns the spawner if one exists, without creating it (null in single-player).
+static func find() -> PlayerSpawner:
+	return SceneLoader.persistent_node.get_node_or_null(NodePath(NODE_NAME)) as PlayerSpawner
+
 ## Returns the spawner, creating it under the persistent node if needed.
 static func ensure() -> PlayerSpawner:
 	var existing := SceneLoader.persistent_node.get_node_or_null(NodePath(NODE_NAME)) as PlayerSpawner
@@ -54,8 +58,13 @@ func _ready() -> void:
 		_on_session_started(Session.is_host())
 
 func get_body(peer_id: int) -> Player:
-	var body: Player = _bodies.get(peer_id)
-	return body if is_instance_valid(body) else null
+	# Deliberately untyped: assigning a freed instance to a `Player`-typed variable is itself an
+	# error ("Trying to assign invalid previously freed instance"), so the check below would never
+	# run. A remote body is freed when its owner reparents it (battles) and the spawner despawns it.
+	var body = _bodies.get(peer_id)
+	if is_instance_valid(body):
+		return body
+	return null
 
 ## Host only. Spawns the toon for [param peer_id] unless it already exists.
 func spawn_player(peer_id: int) -> Player:

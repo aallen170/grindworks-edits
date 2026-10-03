@@ -200,6 +200,7 @@ func _update_overlay() -> void:
 			"host" if Session.is_host() else "client",
 			_floor.room_order.size(), _floor.room_plan_paths.size(),
 			_floor.get_layout_fingerprint(5), _floor.get_layout_fingerprint()]
+		text += "\nStreaming: " + _floor.get_stream_debug()
 	elif is_waiting_for_floor():
 		text += "waiting for host's floor"
 	else:
