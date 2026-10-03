@@ -31,7 +31,13 @@ const INTERACTIVE_STREAM_PLAYER := "res://scenes/game_floor/music_controller/fac
 @onready var room_node := $Rooms
 var unloaded_rooms: Node3D
 var room_order: Array[StoredRoom] = []
+## The LOCAL toon's room (TGM-41). Everything that asks "the current room" (items, music, out of
+## bounds) means the local player. Streaming uses [method get_stream_anchors] instead, which also
+## covers the other toons in a session.
 var room_index := 0
+## The anchor room indexes the loaded window was last built for, and whether a refresh is queued.
+var _applied_anchors: Array[int] = []
+var _refresh_queued := false
 var floor_rooms: DepartmentFloor
 var battle_ratio: float = 0.5
 var rooms_remaining: Array[int] = []
@@ -232,6 +238,7 @@ func spawn_player(player: Player) -> void:
 	var entrance = room_node.get_child(0)
 	var spawn_point: Node3D = entrance.get_node('SPAWNPOINT')
 	player.global_position = spawn_point.global_position
+	player.current_room_index = 0
 	# Each peer places only its own body (position syncs from the owner); spread them along the
 	# spawn point so toons do not stack inside each other.
 	var spawn_index := maxi(Session.get_player_peer_ids().find(Session.get_local_peer_id()), 0)
@@ -397,9 +404,13 @@ func append_room(room: PackedScene, room_type: RoomType):
 	room_order.append(storage)
 
 func body_entered_room(body, index: int):
-	if body is Player:
+	# Only the local toon moves the local room_index. A remote body fires this too (it overlaps the
+	# RoomArea), but its room arrives through Player.current_room_index, which also covers a room
+	# this peer has not built or has unloaded, where no Area signal can fire (TGM-41).
+	if body is Player and body.is_multiplayer_authority():
 		room_index = index
-		adjust_view(room_index)
+		body.current_room_index = index
+		adjust_view(index)
 
 func roll_for_room(rooms: Array[FacilityRoom], seed_channel := RNG.ChannelTrueRandom) -> PackedScene:
 	return load(roll_for_room_path(rooms, seed_channel))
@@ -420,30 +431,90 @@ func roll_for_room_path(rooms: Array[FacilityRoom], seed_channel := RNG.ChannelT
 	previous_rooms.append(rooms[room_idx])
 	return rooms[room_idx].room
 
-func adjust_view(index: int = 0):
+## Queues a streaming refresh, run at the start of the next physics frame by [method _physics_process].
+## Queued and coalesced: [method body_entered_room] runs inside a physics callback, and reparenting
+## rooms (which hold the very RoomAreas that are signalling) from there is unsafe; several toons
+## entering rooms in one frame also only need one pass. A physics frame, not an idle one
+## ([code]call_deferred[/code]): rooms hold interpolated cameras, and moving them outside the physics
+## frame logs "[Physics interpolation] Interpolated Camera3D triggered from outside physics process".
+func adjust_view(_index: int = 0) -> void:
+	_refresh_queued = true
+
+## Room indexes to keep loaded windows around: the local toon's room, plus the room of every
+## other toon in the session (read from the replicated [member Player.current_room_index]).
+## A toon whose body has not arrived yet is skipped. A disconnected toon's body is kept alive
+## (D5), so its room stays loaded.
+func get_stream_anchors() -> Array[int]:
+	var anchors: Array[int] = [room_index]
+	if not Session.is_session_active():
+		return anchors
+	var spawner := PlayerSpawner.find()
+	if not spawner:
+		return anchors
+	var local_id := Session.get_local_peer_id()
+	for peer_id in Session.get_player_peer_ids():
+		if peer_id == local_id:
+			continue
+		var body := spawner.get_body(peer_id)
+		if body:
+			anchors.append(clampi(body.current_room_index, 0, maxi(room_count - 1, 0)))
+	return anchors
+
+## A remote toon's room changes arrive over the network, with no signal on this peer, so poll.
+## Cheap: at most four ints compared per physics frame, and only during a session.
+func _physics_process(_delta: float) -> void:
 	if room_order.is_empty():
 		return
-		
+	if _refresh_queued:
+		_refresh_streaming()
+	elif Session.is_session_active() and get_stream_anchors() != _applied_anchors:
+		_refresh_streaming()
+
+## One-line summary for the debug overlay (TGM-41): which room each toon is in (local first), and
+## which room indexes are currently in the tree on this peer.
+func get_stream_debug() -> String:
+	var loaded: Array[int] = []
+	for i in room_order.size():
+		if room_order[i].room.is_inside_tree():
+			loaded.append(i)
+	return "toon rooms %s | loaded rooms %s" % [get_stream_anchors(), loaded]
+
+func _refresh_streaming() -> void:
+	_refresh_queued = false
+	if room_order.is_empty():
+		return
+	var anchors := get_stream_anchors()
+	_applied_anchors = anchors
 	var border := render_rooms / 2
-	var lower_bound := maxi(index-border, 0)
-	var upper_bound := maxi(index+border, render_rooms)
-	
+
+	# Keep a room loaded if ANY toon's window covers it, so no room unloads out from under a toon.
 	for i in room_order.size():
 		var room = room_order[i].room
-		if i < lower_bound or i > upper_bound:
+		var wanted := false
+		for anchor in anchors:
+			# Same window as single-player always used for one anchor.
+			if i >= maxi(anchor - border, 0) and i <= maxi(anchor + border, render_rooms):
+				wanted = true
+				break
+		if not wanted:
 			if room.get_parent() == room_node:
 				room.reparent(unloaded_rooms)
 		else:
 			if not room.is_inside_tree():
 				room.reparent(room_node, false)
 				room.transform = room_order[i].room_transform
-		
-	# Check if new rooms are needed
-	var t := index
-	while t < room_index+render_rooms / 2 and t < room_count - 1:
-		if room_order.size() - 1 <= t:
-			add_random_room()
-		t += 1
+
+	# Build forward until the furthest anchor has rooms planned around it. This is a target, not
+	# a per-step increment: a toon that is several rooms past what was built still gets a full window.
+	var build_target := 0
+	for anchor in anchors:
+		build_target = maxi(build_target, mini(anchor + border, room_count - 1))
+	while room_order.size() - 1 < build_target:
+		var built := room_order.size()
+		add_random_room()
+		if room_order.size() == built:
+			# Nothing left in the plan; do not spin.
+			break
 
 func get_current_room() -> Node3D:
 	return room_order[room_index].room

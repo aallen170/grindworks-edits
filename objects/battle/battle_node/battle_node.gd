@@ -68,7 +68,10 @@ func _ready():
 	BattleService.s_battle_spawned.emit(self)
 
 func body_entered(body: Node3D):
-	if body is Player and not body.ignore_battles:
+	# Only the toon this peer owns can start a battle here (TGM-41). A replicated body of another
+	# player overlaps this area too, but battles are not synced yet (M1 is "no battles"), so letting
+	# it start one runs a battle on a peer whose player is elsewhere and reparents the remote body.
+	if body is Player and body.is_multiplayer_authority() and not body.ignore_battles:
 		s_player_entered.emit(body)
 
 func player_entered(player : Player):
